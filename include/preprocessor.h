@@ -28,12 +28,11 @@ extern int unique_id_counter;
 extern ControlBlock control_stack[MAX_STACK_DEPTH];
 extern int stack_ptr;
 
-void scan_macros(FILE *fp);
-void substitute_args(char *line, char *arg1, char *arg2, char *arg3);
 int line_contains_comma(const char *line);
-int pop_id();
-void push_id(int id);
+void push_id(int id, const char* name);
 int peek_id();
+int pop_id(const char* end_name);
 void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3, int id);
+int find_macro(const char *name);
 
 #endif

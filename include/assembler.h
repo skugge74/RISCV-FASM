@@ -52,5 +52,6 @@ void handle_directive(char *directive, char *args, bool write_mode);
 void init_assembler_pass();
 void init_assembler_total();
 void save_binary(const char* filename);
+void dump_symbol_table();
 
 #endif

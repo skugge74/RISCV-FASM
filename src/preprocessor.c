@@ -7,34 +7,20 @@ bool defining_macro = false;
 ControlBlock control_stack[MAX_STACK_DEPTH];
 int stack_ptr = -1;
 
-
-
+int find_macro(const char *name) {
+    for (int i = 0; i < macro_lib_count; i++) {
+        if (strcmp(name, macro_lib[i].name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 int line_contains_comma(const char *line) {
     if (!line) return 0;
     return (strchr(line, ',') != NULL) ? 1 : 0;
 }
 
-void scan_macros(FILE *fp) {
-    char line[MAX_LINE_LEN];
-    rewind(fp);
-    while (fgets(line, sizeof(line), fp)) {
-        char ins[32], a1[32], a2[32];
-        if (sscanf(line, "%s %s %s", ins, a1, a2) < 2) continue;
-        
-        if (strcmp(ins, "macro") == 0) {
-            Macro *m = &macro_lib[macro_lib_count++];
-            strcpy(m->name, a1);
-            m->line_count = 0;
-            m->arg_count = (a2[0] != '\0') + line_contains_comma(line); 
-
-            while (fgets(line, sizeof(line), fp)) {
-                if (strstr(line, "endm")) break;
-                strcpy(m->lines[m->line_count++], line);
-            }
-        }
-    }
-}
 
  int unique_id_counter = 0; 
 
@@ -68,15 +54,27 @@ void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3, int
     }
 }
 
-void push_id(int id) {
-    if (stack_ptr < MAX_STACK_DEPTH - 1) control_stack[++stack_ptr].id = id;
+void push_id(int id, const char* name) {
+    if (stack_ptr < MAX_STACK_DEPTH - 1) {
+        stack_ptr++;
+        control_stack[stack_ptr].id = id;
+        strncpy(control_stack[stack_ptr].name, name, 31);
+    }
 }
 
-int pop_id() {
-    if (stack_ptr >= 0) return control_stack[stack_ptr--].id;
-    return 0;
+int pop_id(const char* end_name) {
+    if (stack_ptr < 0) return 0;
+
+    // Logic: if we are at 'endrepeat', the 'end_name' is "repeat"
+    // We check if the stack top matches "repeat"
+    if (strcmp(control_stack[stack_ptr].name, end_name) != 0) {
+        printf("Warning: Mismatched block! Found end%s but top is %s\n", 
+                end_name, control_stack[stack_ptr].name);
+    }
+    return control_stack[stack_ptr--].id;
 }
 int peek_id() {
     if (stack_ptr >= 0) return control_stack[stack_ptr].id;
     return 0;
 }
+

@@ -7,7 +7,15 @@ char current_parent[64] = "global";
 Assembler as_state;
 
 // --- INITIALIZATION ---
-
+void dump_symbol_table() {
+    printf("\n--- SYMBOL TABLE DUMP ---\n");
+    printf("%-30s | %-10s\n", "Symbol Name", "Address");
+    printf("---------------------------------------------\n");
+    for (int i = 0; i < symbol_count; i++) {
+        printf("%-30s | 0x%08X\n", symbol_table[i].name, symbol_table[i].address);
+    }
+    printf("---------------------------------------------\n\n");
+}
 void init_assembler_total() {
     memset(&as_state, 0, sizeof(Assembler));
     as_state.origin = 0x80000000; // Default for QEMU Virt
@@ -23,33 +31,23 @@ void init_assembler_pass() {
 
 void add_symbol(const char* name, uint32_t offset) {
     if (symbol_count >= MAX_SYMBOLS) return;
-    
     char full_name[128];
-    // --- 1. Handle Local vs Global Labels ---
-    if (name[0] == '.') {
-        // Local label: append to current parent (e.g., main.loop)
+
+    bool is_macro_label = (name[0] == '.' && (strchr(name, '_') != NULL || isdigit(name[1])));
+if (is_macro_label) {
+    strncpy(full_name, name, 127); // Keep as .rep_start_1
+} 
+    else if (name[0] == '.') {
         snprintf(full_name, sizeof(full_name), "%s%s", current_parent, name);
     } else {
-        // Global label: update the parent and use the name directly
         strncpy(current_parent, name, 63);
         strncpy(full_name, name, 127);
     }
     
     strcpy(symbol_table[symbol_count].name, full_name);
-    
-    // --- 2. The FASM "Flat" Logic ---
-    // In FASM, we don't care about sections for address calculation.
-    // Every symbol address is simply the Global Origin + the offset in the binary.
-    // If .org was 0x80000000, and this is the 10th byte, address is 0x8000000A.
-    
     symbol_table[symbol_count].address = as_state.origin + offset;
-    
-    // Debug print so you can see it working during Pass 1
-    printf("  [SYMBOL] %-15s -> 0x%08X\n", full_name, symbol_table[symbol_count].address);
-
     symbol_count++;
 }
-
 int find_symbol(const char *name) {
     for (int i = 0; i < symbol_count; i++) {
         if (strcmp(symbol_table[i].name, name) == 0) return symbol_table[i].address;
@@ -63,7 +61,6 @@ int find_symbol(const char *name) {
     }
     return -1; 
 }
-
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     int val;
     if (parse_arg(name, &val)) return val; 
@@ -71,19 +68,14 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     int target_addr = find_symbol(name);
     if (target_addr != -1) {
         if (is_relative) {
-            uint32_t absolute_pc = as_state.origin + current_offset;
-            int32_t diff = (int32_t)target_addr - (int32_t)absolute_pc;
-            // DEBUG PRINT
-            if (as_state.size > 0) { // Only print during Write Pass
-                printf("  [REL_RESOLVE] Symbol: %s | Target: 0x%X | PC: 0x%X | Offset: %d\n", 
-                        name, target_addr, absolute_pc, diff);
-            }
-            return diff;
-        }
+    uint32_t absolute_pc = as_state.origin + current_offset;
+    return (int32_t)target_addr - (int32_t)absolute_pc;
+}
         return target_addr; 
     }
     return 0; 
 }
+
 // --- ENCODING UTILITIES ---
 
 uint32_t encode_R_type(int op, int f3, int f7, int rs1, int rs2, int rd) {
@@ -174,8 +166,8 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "bge"))  return encode_B_type(0x63, 0x5, a1, a2, a3);
     if (!strcmp(name, "bltu")) return encode_B_type(0x63, 0x6, a1, a2, a3);
     if (!strcmp(name, "bgeu")) return encode_B_type(0x63, 0x7, a1, a2, a3);
-    if (!strcmp(name, "beqz")) return encode_B_type(0x63, 0x0, a1, 0, a2);
-    if (!strcmp(name, "bnez")) return encode_B_type(0x63, 0x1, a1, 0, a2);
+    if (!strcmp(name, "beqz")) return encode_B_type(0x63, 0x0, a1, 0, a3);
+    if (!strcmp(name, "bnez")) return encode_B_type(0x63, 0x1, a1, 0, a3);
 
     // --- Jumps & Upper Immediates ---
     if (!strcmp(name, "jal"))   return encode_J_type(0x6F, a1, a2);
@@ -298,6 +290,19 @@ void handle_directive(char *directive, char *args, bool write_mode) {
         as_state.size++;
     }
   }
+else if (!strcmp(directive, ".fill")) {
+    // Usage: .fill <count>, <size>, <value>
+    // Example: .fill 1024, 1, 0  (Allocates 1KB of zeros)
+    int count = 0, size = 1, value = 0;
+    sscanf(args, "%d %d %d", &count, &size, &value);
+    
+    for (int i = 0; i < (count * size); i++) {
+        if (write_mode) {
+            as_state.image[as_state.size] = (uint8_t)value;
+        }
+        as_state.size++;
+    }
+}
   else if (!strcmp(directive, ".byte")) {
     char *p = args;
     while (*p) {
@@ -323,6 +328,103 @@ void handle_directive(char *directive, char *args, bool write_mode) {
   }
 }
 
+void process_pass(FILE *fp, bool write_mode) {
+    char line[MAX_LINE_LEN];
+    init_assembler_pass();
+    rewind(fp);
+
+    unique_id_counter = 0;
+    stack_ptr = -1;
+    defining_macro = false;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        char work[MAX_LINE_LEN];
+        strcpy(work, line);
+        simplify_punct(work);
+
+        char ins[32], a1[32], a2[32], a3[32], a4[32];
+        if (!split_line(work, ins, a1, a2, a3, a4)) continue;
+
+        // --- 1. HANDLE MACRO DEFINITION ---
+        if (!strcmp(ins, "macro")) {
+            defining_macro = true;
+            strcpy(macro_lib[macro_lib_count].name, a1);
+            macro_lib[macro_lib_count].line_count = 0;
+            continue;
+        }
+        if (!strcmp(ins, "endm")) {
+            defining_macro = false;
+            macro_lib_count++;
+            continue;
+        }
+        if (defining_macro) {
+            strcpy(macro_lib[macro_lib_count].lines[macro_lib[macro_lib_count].line_count++], line);
+            continue;
+        }
+
+        // --- 2. HANDLE MACRO EXPANSION (General Scoping) ---
+        int m_idx = find_macro(ins);
+        if (m_idx != -1) {
+            int current_id;
+
+            // A. Check if it's a Block Ender (e.g., endrepeat)
+            if (strncmp(ins, "end", 3) == 0) {
+                const char* base_name = ins + 3; // Strip "end"
+                current_id = pop_id(base_name);  // Pop matching ID
+            } 
+            else {
+                // B. Generate new ID
+                current_id = ++unique_id_counter;
+                
+                // C. Check if it's a Block Starter (does an "end" version exist?)
+                char end_search[64];
+                snprintf(end_search, 64, "end%s", ins);
+                if (find_macro(end_search) != -1) {
+                    push_id(current_id, ins); // It's a block, save ID to stack
+                }
+                // Else: It's atomic (like print_str), don't touch the stack
+            }
+
+            for (int i = 0; i < macro_lib[m_idx].line_count; i++) {
+                char expanded[MAX_LINE_LEN];
+                strcpy(expanded, macro_lib[m_idx].lines[i]);
+                substitute_args_with_id(expanded, a1, a2, a3, current_id);
+                process_instruction(expanded, write_mode); 
+            }
+            continue;
+        }
+
+        // --- 3. HANDLE DIRECTIVES ---
+        if (ins[0] == '.' && ins[strlen(ins)-1] != ':') {
+            char *args_ptr = strstr(line, ins) + strlen(ins);
+            handle_directive(ins, args_ptr, write_mode);
+            continue; 
+        }
+
+        // --- 4. PROCESS STANDARD INSTRUCTION ---
+        if (!defining_macro) {
+            // NEW: If we are inside a repeat/block, substitute %u here too!
+            if (stack_ptr >= 0) {
+                int current_id = peek_id();
+                // Pass empty strings for args, but apply the ID
+                substitute_args_with_id(line, "", "", "", current_id);
+            }
+            process_instruction(line, write_mode);
+        }
+    }
+}
+
+void save_binary(const char* filename) {
+    FILE *f = fopen(filename, "wb");
+    if (!f) return;
+    
+    // Write the unified image from byte 0 to as_state.size
+    fwrite(as_state.image, 1, as_state.size, f);
+    
+    fclose(f);
+    printf("FASM Binary Saved: %d bytes\n", as_state.size);
+}
 void process_instruction(char *line, bool write_mode) {
     char work[MAX_LINE_LEN]; 
     strcpy(work, line); 
@@ -348,78 +450,71 @@ void process_instruction(char *line, bool write_mode) {
         return; 
     }
 
-    // 3. Instruction Encoding
     if (as_state.current_section == SECTION_DATA) return;
 
+    // --- 3. Instruction Encoding & Size Stability ---
+    int v1 = 0, v2 = 0, v3 = 0;
+
     if (!strcmp(ins, "la")) {
-    // During Pass 1, addr will be 0. 
-    // We MUST increment by 8 in BOTH passes to keep offsets consistent.
-    int rd = resolve_val(a1, current_offset, false);
-    int addr = resolve_val(a2, current_offset, false);
-    
-    if (write_mode) {
-        uint32_t lower = addr & 0xFFF;
-        uint32_t upper = (lower & 0x800) ? (addr >> 12) + 1 : (addr >> 12);
-        uint32_t lui = encode_U_type(0x37, rd, upper << 12);
-        uint32_t addi = encode_I_type(0x13, 0x0, lower, rd, rd);
-        memcpy(&as_state.image[as_state.size], &lui, 4);
-        memcpy(&as_state.image[as_state.size + 4], &addi, 4);
-    }
-    as_state.size += 8; // Always 8
-}
-    else if (!strcmp(ins, "li")) {
-    int rd = resolve_val(a1, current_offset, false);
-    int val;
-    // Check if the argument is a raw number or a symbol
-    bool is_const = parse_arg(a2, &val);
-    
-    // If it's a symbol OR a large constant, it's ALWAYS 8 bytes
-    if (!is_const || val < -2048 || val > 2047) {
+        int rd = resolve_val(a1, current_offset, false);
         if (write_mode) {
-            val = resolve_val(a2, current_offset, false);
-            uint32_t lower = val & 0xFFF;
-            uint32_t upper = (lower & 0x800) ? ((uint32_t)val >> 12) + 1 : ((uint32_t)val >> 12);
+            int addr = resolve_val(a2, current_offset, false);
+            uint32_t lower = addr & 0xFFF;
+            uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
             uint32_t addi = encode_I_type(0x13, 0x0, lower, rd, rd);
             memcpy(&as_state.image[as_state.size], &lui, 4);
             memcpy(&as_state.image[as_state.size + 4], &addi, 4);
         }
         as_state.size += 8;
-    } else {
-        if (write_mode) {
-            uint32_t addi = encode_I_type(0x13, 0x0, val, 0, rd);
-            memcpy(&as_state.image[as_state.size], &addi, 4);
-        }
-        as_state.size += 4;
     }
-}
-else {
-        int v1 = 0, v2 = 0, v3 = 0;
-
+    else if (!strcmp(ins, "li")) {
+        int rd = resolve_val(a1, current_offset, false);
+        int val;
+        bool is_const = parse_arg(a2, &val);
+        // Force 8 bytes if it's a symbol or a constant out of 12-bit range
+        if (!is_const || val < -2048 || val > 2047) {
+            if (write_mode) {
+                int sym_val = resolve_val(a2, current_offset, false);
+                uint32_t lower = sym_val & 0xFFF;
+                uint32_t upper = (lower & 0x800) ? ((uint32_t)sym_val >> 12) + 1 : ((uint32_t)sym_val >> 12);
+                uint32_t lui = encode_U_type(0x37, rd, upper << 12);
+                uint32_t addi = encode_I_type(0x13, 0x0, lower, rd, rd);
+                memcpy(&as_state.image[as_state.size], &lui, 4);
+                memcpy(&as_state.image[as_state.size + 4], &addi, 4);
+            }
+            as_state.size += 8;
+        } else {
+            if (write_mode) {
+                uint32_t bin = encode_I_type(0x13, 0x0, val, 0, rd);
+                memcpy(&as_state.image[as_state.size], &bin, 4);
+            }
+            as_state.size += 4;
+        }
+    }
+ else {
         if (!strcmp(ins, "j")) {
-            v1 = 0; // x0
-            v2 = resolve_val(a1, current_offset, true); // <--- Relative distance
+            v1 = 0;   // rd = x0
+            v2 = resolve_val(a1, current_offset, true); // offset maps to a2
+            v3 = 0;   // unused
         } 
-        else if (!strcmp(ins, "jal")) {
-            v1 = resolve_val(a1, current_offset, false);
-            v2 = resolve_val(a2, current_offset, true); // <--- Relative distance
-        } 
-        else if (ins[0] == 'b') { // beqz, bnez, beq, bne
-            v1 = resolve_val(a1, current_offset, false);
+        else if (ins[0] == 'b') { 
+            v1 = resolve_val(a1, current_offset, false); // rs1
             if (!strcmp(ins, "beqz") || !strcmp(ins, "bnez")) {
-                v2 = 0; // x0
-                v3 = resolve_val(a2, current_offset, true); // <--- Relative distance
+                v2 = 0; // rs2 = x0
+                v3 = resolve_val(a2, current_offset, true); // offset maps to a3
             } else {
-                v2 = resolve_val(a2, current_offset, false);
-                v3 = resolve_val(a3, current_offset, true); // <--- Relative distance
+                v2 = resolve_val(a2, current_offset, false); // rs2
+                v3 = resolve_val(a3, current_offset, true);  // offset maps to a3
             }
         }
-        else if (!strcmp(ins, "lb") || !strcmp(ins, "lw") || !strcmp(ins, "sb") || !strcmp(ins, "sw")) {
-            v1 = resolve_val(a1, current_offset, false);
-            v2 = resolve_val(a2, current_offset, false); 
-            v3 = resolve_val(a3, current_offset, false);
-        } 
+        else if (!strcmp(ins, "jal")) {
+            v1 = resolve_val(a1, current_offset, false); // rd
+            v2 = resolve_val(a2, current_offset, true);  // offset maps to a2
+            v3 = 0;
+        }
         else {
+            // Standard R, I, S type logic
             v1 = resolve_val(a1, current_offset, false);
             v2 = resolve_val(a2, current_offset, false);
             v3 = resolve_val(a3, current_offset, false);
@@ -427,49 +522,8 @@ else {
 
         if (write_mode) {
             uint32_t bin = encode_instruction(ins, v1, v2, v3);
-            if (bin != 0) {
-                memcpy(&as_state.image[as_state.size], &bin, 4);
-            }
+            if (bin != 0) memcpy(&as_state.image[as_state.size], &bin, 4);
         }
         as_state.size += 4;
-    }
-}
-void process_pass(FILE *fp, bool write_mode) {
-    char line[MAX_LINE_LEN];
-    init_assembler_pass(); // Reset offsets for the start of the pass
-    rewind(fp);
-
-    while (fgets(line, sizeof(line), fp)) {
-        // 1. Clean the line
-        line[strcspn(line, "\r\n")] = '\0';
-        
-        char ins[32], a1[32], a2[32], a3[32], a4[32];
-        char split_tmp[MAX_LINE_LEN];
-        strcpy(split_tmp, line);
-        simplify_punct(split_tmp);
-
-        // 2. Skip empty lines
-        if (!split_line(split_tmp, ins, a1, a2, a3, a4)) continue;
-
-        // 3. Handle Section Switching and ORG immediately
-        if (ins[0] == '.') {
-            char *args_ptr = strstr(line, ins) + strlen(ins);
-            handle_directive(ins, args_ptr, write_mode);
-            // Crucial: After a directive, we move to the NEXT line
-            continue; 
-        }
-
-        // 4. If it's an instruction or label, process it
-        process_instruction(line, write_mode);
-    }
-}
-void save_binary(const char* filename) {
-    FILE *f = fopen(filename, "wb");
-    if (!f) return;
-    
-    // Write the unified image from byte 0 to as_state.size
-    fwrite(as_state.image, 1, as_state.size, f);
-    
-    fclose(f);
-    printf("FASM Binary Saved: %d bytes\n", as_state.size);
+    }   
 }
