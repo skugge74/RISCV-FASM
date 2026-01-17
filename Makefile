@@ -1,48 +1,69 @@
+# --- Toolchain ---
 TARGET    := riscv-assembler
 BUILD_DIR := ./build
 SRC_DIR   := ./src
 INC_DIR   := ./include
 TEST_DIR  := ./macros
+
 CC        := gcc
 CFLAGS    := -I$(INC_DIR) -Wall -Wextra -Wpedantic -std=c11
 DEBUG     := -g -O0
-RELEASE   := -O2
 
+# RISC-V Tools
+OBJDUMP   := riscv64-linux-gnu-objdump
+QEMU      := qemu-system-riscv32
+
+# --- Files ---
 SRCS      := $(wildcard $(SRC_DIR)/*.c)
 OBJS      := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-FILE ?= macros/repeat.s
+# Default assembly file if none provided
+FILE    ?= macros/repeat.s
 HEX_OUT := $(FILE:.s=.hex)
+
+# --- Rules ---
 
 all: $(TARGET)
 
+# 1. Assemble and Run in QEMU
+# Usage: make run FILE=macros/data.s
 run: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
-		echo "Assembling $(FILE) -> $(HEX_OUT)..."; \
+		echo "--- Assembling ---"; \
 		./$(TARGET) $(FILE) $(HEX_OUT); \
-		echo "Output saved to $(HEX_OUT)"; \
+		echo "--- Running QEMU ---"; \
+		$(QEMU) -M virt -bios none -kernel $(HEX_OUT) -nographic; \
 	else \
 		echo "Error: File '$(FILE)' not found."; \
-		echo "Usage: make run FILE=path/to/file.s"; \
 		exit 1; \
 	fi
 
-do:
-	riscv64-linux-gnu-objcopy -I binary -O elf32-littleriscv \
-		--change-section-address .data=0x0 \
-		$(BIN) $(ELF)
-	qemu-riscv32 ./$(ELF)
+# 2. Assemble and Dump Disassembly
+# Usage: make dump FILE=macros/data.s
+dump: $(TARGET)
+	@if [ -f "$(FILE)" ]; then \
+		./$(TARGET) $(FILE) $(HEX_OUT); \
+		echo "--- Disassembly ---"; \
+		$(OBJDUMP) -D -b binary -m riscv:rv32 $(HEX_OUT); \
+	else \
+		echo "Error: File '$(FILE)' not found."; \
+		exit 1; \
+	fi
 
+# 3. Build the Assembler itself
 $(TARGET): $(OBJS)
+	@echo "Linking $(TARGET)..."
 	@$(CC) $(OBJS) -o $@ $(DEBUG)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+	@echo "Compiling $<..."
 	@$(CC) $(CFLAGS) $(DEBUG) -c $< -o $@
 
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 
 clean:
+	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR) $(TARGET) $(TEST_DIR)/*.hex
 
-.PHONY: all run clean
+.PHONY: all run dump clean

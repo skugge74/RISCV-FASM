@@ -9,6 +9,12 @@ without losing the control of writing raw assembly.
 
 - The Control-Flow Stack: This assembler can handle nested macros.
 
+`make`	                    Builds the riscv-assembler executable.
+`make run`	                Uses the default macros/repeat.s, assembles, and starts QEMU.
+`make run FILE=filename`	Assembles and runs a specific file.
+`make dump FILE=filename`   Dumps the specific file
+
+
 ==========================================================
         RISC-V HIGH-LEVEL MACRO DOCUMENTATION
 ==========================================================

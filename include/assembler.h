@@ -32,7 +32,7 @@ extern Symbol symbol_table[MAX_SYMBOLS];
 extern int symbol_count;
 extern char current_parent[64];
 
-// Prototypes
+
 uint32_t encode_R_type(int op, int f3, int f7, int rs1, int rs2, int rd);
 uint32_t encode_I_type(int op, int f3, int imm, int rs1, int rd);
 uint32_t encode_U_type(int op, int rd, int imm);

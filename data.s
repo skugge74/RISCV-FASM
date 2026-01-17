@@ -33,13 +33,13 @@ _start:
 
 repeat 10
   la s0, msg
-  .print_loop_%u:
+  .print_loop:
     lb s2, 0(s0)
-    beqz s2, .print_done_%u
+    beqz s2, .print_done
     sb s2, 0(s1)
     addi s0, s0, 1
-    j .print_loop_%u
-  .print_done_%u:
+    j .print_loop
+  .print_done:
 
 endrepeat
 

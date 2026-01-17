@@ -65,8 +65,8 @@ void push_id(int id, const char* name) {
 int pop_id(const char* end_name) {
     if (stack_ptr < 0) return 0;
 
-    // Logic: if we are at 'endrepeat', the 'end_name' is "repeat"
-    // We check if the stack top matches "repeat"
+
+
     if (strcmp(control_stack[stack_ptr].name, end_name) != 0) {
         printf("Warning: Mismatched block! Found end%s but top is %s\n", 
                 end_name, control_stack[stack_ptr].name);
