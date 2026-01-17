@@ -1,18 +1,37 @@
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 #include "assembler.h"
 
 int main(int argc, char **argv) {
-    if (argc != 3) { printf("Usage: %s <in.s> <out.hex>\n", argv[0]); return 1; }
-    FILE *in = fopen(argv[1], "r"), *out = fopen(argv[2], "w");
-    if (!in || !out) { perror("Error"); return 1; }
+    if (argc != 3) { 
+        printf("Usage: %s <input.s> <output.hex>\n", argv[0]); 
+        return 1; 
+    }
 
-    process_pass(in, NULL, false);
+    FILE *in = fopen(argv[1], "r");
+    if (!in) { 
+        perror("Error opening input file"); 
+        return 1; 
+    }
+
+    // Initialize the global assembler state (Clear buffers and set section to .text)
+    init_assembler_total();
+
+    // PASS 1: Build the Symbol Table
+    // This populates addresses for both .text and .data labels
+    process_pass(in, false);
+    
+    // Rewind for the second pass
     rewind(in);
-    process_pass(in, out, true);
 
-    fclose(in); fclose(out);
+    // PASS 2: Encode instructions and data into internal buffers
+    process_pass(in, true);
+
+    // FINAL STEP: Write the accumulated buffers to the output file
+    // This merges the .text and .data sections into the final hex file
+    save_binary(argv[2]);
+
+    fclose(in);
     printf("Assembly complete. Symbols found: %d\n", symbol_count);
     return 0;
 }

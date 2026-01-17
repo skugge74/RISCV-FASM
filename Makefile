@@ -27,6 +27,11 @@ run: $(TARGET)
 		exit 1; \
 	fi
 
+do:
+	riscv64-linux-gnu-objcopy -I binary -O elf32-littleriscv \
+		--change-section-address .data=0x0 \
+		$(BIN) $(ELF)
+	qemu-riscv32 ./$(ELF)
 
 $(TARGET): $(OBJS)
 	@$(CC) $(OBJS) -o $@ $(DEBUG)
