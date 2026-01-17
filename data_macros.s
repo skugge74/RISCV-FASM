@@ -23,6 +23,7 @@ macro endrepeat
     .rep_exit_%u:
         addi sp, sp, 4
 endm
+
 macro print_str %1
 la s0, %1   # Pointer reset inside loop
   .print_loop_%u:

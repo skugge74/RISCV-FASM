@@ -250,7 +250,27 @@ bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, 
 
 
 void handle_directive(char *directive, char *args, bool write_mode) {
-    if (!strcmp(directive, ".text")) as_state.current_section = SECTION_TEXT;
+    if (!strcmp(directive, ".include")) {
+    // Usage: .include "macros.s"
+    char *start = strchr(args, '\"');
+    char *end = strrchr(args, '\"');
+    
+    if (start && end && start != end) {
+        *end = '\0'; // Temporarily terminate for the filename
+        char *filename = start + 1;
+
+        FILE *inc_fp = fopen(filename, "r");
+        if (inc_fp) {
+            // RECURSIVE PASS: Process the included file immediately
+            // It continues using the global 'as_state' and 'symbol_table'
+            process_pass(inc_fp, write_mode); 
+            fclose(inc_fp);
+        } else {
+            printf("FASM Error: Include file not found: %s\n", filename);
+        }
+    }
+  }
+  else if (!strcmp(directive, ".text")) as_state.current_section = SECTION_TEXT;
     else if (!strcmp(directive, ".data")) as_state.current_section = SECTION_DATA;
     else if (!strcmp(directive, ".org")) {
         as_state.origin = (uint32_t)strtol(args, NULL, 0);
@@ -346,7 +366,7 @@ else if (!strcmp(directive, ".space")) {
 
 void process_pass(FILE *fp, bool write_mode) {
     char line[MAX_LINE_LEN];
-    init_assembler_pass();
+    //init_assembler_pass();
     rewind(fp);
 
     unique_id_counter = 0;

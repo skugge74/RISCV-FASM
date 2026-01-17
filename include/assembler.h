@@ -54,4 +54,5 @@ void init_assembler_total();
 void save_binary(const char* filename);
 void dump_symbol_table();
 
+void process_line(char *line, bool write_mode);
 #endif
