@@ -3,6 +3,22 @@ macro halt
     j .halt_%u
 endm
 
+; Usage: MAX dest, val_a, val_b
+macro max %1, %2, %3
+    ; Check if val_a (%2) < val_b (%3)
+    blt %2, %3, .pick_b_%u
+    
+    ; Case A: val_a is larger (or equal)
+    mv %1, %2
+    j .done_%u
+
+    ; Case B: val_b is larger
+    .pick_b_%u:
+    mv %1, %3
+
+    .done_%u:
+endm
+
 macro repeat %1
     addi sp, sp, -4
     li   t0, %1

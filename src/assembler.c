@@ -580,7 +580,7 @@ void process_pass(FILE *fp, bool write_mode) {
             for (int i = 0; i < macro_lib[m_idx].line_count; i++) {
                 char expanded[MAX_LINE_LEN];
                 strcpy(expanded, macro_lib[m_idx].lines[i]);
-                substitute_args_with_id(expanded, a1, a2, a3, current_id);
+                substitute_args_with_id(expanded, a1, a2, a3, a4, current_id);
                 process_instruction(expanded, write_mode); 
             }
             continue;
@@ -599,7 +599,7 @@ void process_pass(FILE *fp, bool write_mode) {
             if (stack_ptr >= 0) {
                 int current_id = peek_id();
      
-                substitute_args_with_id(line, "", "", "", current_id);
+                substitute_args_with_id(line, "", "", "", "", current_id);
             }
             process_instruction(line, write_mode);
         }

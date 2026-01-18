@@ -24,12 +24,12 @@ int line_contains_comma(const char *line) {
 
  int unique_id_counter = 0; 
 
-void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3, int id) {
+void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3,char *arg4, int id) {
     char buffer[MAX_LINE_LEN];
     char *p;
-    char *args[] = {arg1, arg2, arg3};
+    char *args[] = {arg1, arg2, arg3, arg4};
     
-    for (int i = 1; i <= 3; i++) {
+    for (int i = 1; i <= 4; i++) {
         char tag[4]; snprintf(tag, 4, "%%%d", i);
         while ((p = strstr(line, tag))) {
             if (strlen(args[i-1]) == 0) break;

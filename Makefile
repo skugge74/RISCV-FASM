@@ -3,7 +3,7 @@ TARGET    := riscv-assembler
 BUILD_DIR := ./build
 SRC_DIR   := ./src
 INC_DIR   := ./include
-TEST_DIR  := ./macros
+TEST_DIR  := ./tests
 
 CC        := gcc
 CFLAGS    := -I$(INC_DIR) -Wall -Wextra -Wpedantic -std=c11
@@ -18,7 +18,7 @@ SRCS      := $(wildcard $(SRC_DIR)/*.c)
 OBJS      := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Default assembly file if none provided
-FILE    ?= macros/repeat.s
+FILE    ?= tests/example.s
 HEX_OUT := $(FILE:.s=.hex)
 
 # --- Rules ---
