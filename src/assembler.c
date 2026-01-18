@@ -60,6 +60,18 @@ int find_symbol(const char *name) {
     return -1; 
 }
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
+    if (strcmp(name, "$") == 0) {
+        int current_addr = as_state.origin + current_offset;
+        if (is_relative) return 0; // $ - $ = 0
+        return current_addr;
+    }
+
+    // $$: Section Origin
+    if (strcmp(name, "$$") == 0) {
+        int section_base = as_state.origin;
+        if (is_relative) return section_base - (as_state.origin + current_offset);
+        return section_base;
+    }
     int val;
     if (parse_arg(name, &val)) return val; 
 
@@ -132,6 +144,11 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "or"))   return encode_R_type(0x33, 0x6, 0x00, a2, a3, a1);
     if (!strcmp(name, "and"))  return encode_R_type(0x33, 0x7, 0x00, a2, a3, a1);
 
+    if (!strcmp(name, "mul"))    return encode_R_type(0x33, 0x0, 0x01, a2, a3, a1);
+    if (!strcmp(name, "div"))    return encode_R_type(0x33, 0x4, 0x01, a2, a3, a1);
+    if (!strcmp(name, "divu"))   return encode_R_type(0x33, 0x5, 0x01, a2, a3, a1);
+    if (!strcmp(name, "rem"))    return encode_R_type(0x33, 0x6, 0x01, a2, a3, a1);
+    if (!strcmp(name, "remu"))   return encode_R_type(0x33, 0x7, 0x01, a2, a3, a1);
 
     if (!strcmp(name, "addi"))  return encode_I_type(0x13, 0x0, a3, a2, a1);
     if (!strcmp(name, "slti"))  return encode_I_type(0x13, 0x2, a3, a2, a1);
@@ -151,7 +168,27 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "lbu")) return encode_I_type(0x03, 0x4, a2, a3, a1);
     if (!strcmp(name, "lhu")) return encode_I_type(0x03, 0x5, a2, a3, a1);
 
+    // Standard CSR Instructions (rd, csr, rs1)
+    if (!strcmp(name, "csrrw")) return encode_I_type(0x73, 0x1, a2, a3, a1); // f3=001
+    if (!strcmp(name, "csrrs")) return encode_I_type(0x73, 0x2, a2, a3, a1); // f3=010
+    if (!strcmp(name, "csrrc")) return encode_I_type(0x73, 0x3, a2, a3, a1); // f3=011
 
+    if (!strcmp(name, "csrr")) {
+      // a1=rd, a2=csr.  We encode: csrrs rd, csr, x0 (rs1=0)
+      return encode_I_type(0x73, 0x2, a2, 0, a1); 
+    }
+    if (!strcmp(name, "csrw")) {
+      // a1=csr, a2=rs1. We encode: csrrw x0, csr, rs1 (rd=0)
+      return encode_I_type(0x73, 0x1, a1, a2, 0);
+    }
+    // csrc csr, rs1 -> csrrc x0, csr, rs1
+    if (!strcmp(name, "csrc")) {
+      return encode_I_type(0x73, 0x3, a1, a2, 0); 
+    }
+    // csrs csr, rs1 -> csrrs x0, csr, rs1
+    if (!strcmp(name, "csrs")) {
+      return encode_I_type(0x73, 0x2, a1, a2, 0); 
+    }
 
     if (!strcmp(name, "sb")) return encode_S_type(0x23, 0x0, a1, a2, a3);
     if (!strcmp(name, "sh")) return encode_S_type(0x23, 0x1, a1, a2, a3);
@@ -183,9 +220,12 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "j"))    return encode_J_type(0x6F, 0, a2);           // jal x0, target
     if (!strcmp(name, "ret"))  return encode_I_type(0x67, 0x0, 0, 1, 0);    // jalr x0, x1, 0
     if (!strcmp(name, "nop"))  return encode_I_type(0x13, 0x0, 0, 0, 0);    // addi x0, x0, 0
-
-    return 0; // Unknown instruction
-}
+    // System Instructions (Trap handling)
+    if (!strcmp(name, "mret")) return 0x30200073; // Return from Machine Trap
+    if (!strcmp(name, "sret")) return 0x10200073; // Return from Supervisor Trap
+    if (!strcmp(name, "wfi"))  return 0x10500073; // Wait For Interrupt
+      return 0; // Unknown instruction
+    }
 
 
 

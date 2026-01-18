@@ -11,7 +11,7 @@
 
 typedef struct {
     char name[32];
-    char lines[16][MAX_LINE_LEN];
+    char lines[128][MAX_LINE_LEN];
     int line_count;
     int arg_count;
 } Macro;

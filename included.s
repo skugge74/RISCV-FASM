@@ -1,3 +1,4 @@
+.include data.s
 macro print_secret
     print_str secret_msg 
 endm
