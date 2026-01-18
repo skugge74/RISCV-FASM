@@ -40,9 +40,11 @@ uint32_t encode_S_type(int op, int f3, int rs2, int imm, int rs1);
 uint32_t encode_B_type(int op, int f3, int rs1, int rs2, int imm);
 uint32_t encode_J_type(int op, int rd, int imm);
 uint32_t encode_instruction(char* name, int a1, int a2, int a3);
+
 void add_symbol(const char* name, uint32_t offset);
 int find_symbol(const char* name);
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative);
+
 void simplify_punct(char *str);
 bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4);
 bool parse_arg(const char *arg, int *out_val);
@@ -54,5 +56,7 @@ void init_assembler_total();
 void save_binary(const char* filename);
 void dump_symbol_table();
 
+int eval_math(char *expr, uint32_t current_offset, bool is_relative);
+char* trim_whitespace(char* str);
 void process_line(char *line, bool write_mode);
 #endif

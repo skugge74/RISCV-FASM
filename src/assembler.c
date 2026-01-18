@@ -6,6 +6,71 @@ int symbol_count = 0;
 char current_parent[64] = "global";
 Assembler as_state;
 
+char* trim_whitespace(char* str) {
+    while(isspace((unsigned char)*str)) str++;
+    if(*str == 0) return str;
+    char* end = str + strlen(str) - 1;
+    while(end > str && isspace((unsigned char)*end)) end--;
+    end[1] = '\0';
+    return str;
+}
+
+int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
+    char buffer[128];
+    strncpy(buffer, expr, 127);
+    char *str = trim_whitespace(buffer); 
+
+    if (!*str) return 0;
+
+    int parens = 0;
+    int split_idx = -1;
+    int lowest_prec = 999; 
+
+    for (int i = 0; str[i]; i++) {
+        if (str[i] == '(') parens++;
+        else if (str[i] == ')') parens--;
+        else if (parens == 0) {
+            int prec = 999;
+            if (str[i] == '+' || str[i] == '-') prec = 1;
+            else if (str[i] == '*' || str[i] == '/') prec = 2;
+            
+            if (prec <= lowest_prec && prec < 999) {
+                lowest_prec = prec;
+                split_idx = i;
+            }
+        }
+    }
+
+    if (split_idx != -1) {
+        char op = str[split_idx];
+        str[split_idx] = '\0'; 
+        
+        // RECURSION: Always calculate ABSOLUTE value first (pass false)
+        int left = eval_math(str, current_offset, false);
+        int right = eval_math(str + split_idx + 1, current_offset, false);
+
+        int result = 0;
+        switch (op) {
+            case '+': result = left + right; break;
+            case '-': result = left - right; break;
+            case '*': result = left * right; break;
+            case '/': result = (right != 0) ? (left / right) : 0; break;
+        }
+
+        if (is_relative) {
+            return result - (as_state.origin + current_offset);
+        }
+        return result;
+    }
+
+    if (str[0] == '(' && str[strlen(str)-1] == ')') {
+        str[strlen(str)-1] = '\0'; 
+        return eval_math(str + 1, current_offset, is_relative); 
+    }
+
+    return resolve_val(str, current_offset, is_relative);
+}
+
 void dump_symbol_table() {
     printf("\n--- SYMBOL TABLE DUMP ---\n");
     printf("%-30s | %-10s\n", "Symbol Name", "Address");
@@ -532,9 +597,9 @@ void process_instruction(char *line, bool write_mode) {
     int v1 = 0, v2 = 0, v3 = 0;
 
     if (!strcmp(ins, "la")) {
-        int rd = resolve_val(a1, current_offset, false);
+        int rd = eval_math(a1, current_offset, false);
         if (write_mode) {
-            int addr = resolve_val(a2, current_offset, false);
+            int addr = eval_math(a2, current_offset, false);
             uint32_t lower = addr & 0xFFF;
             uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
@@ -545,15 +610,17 @@ void process_instruction(char *line, bool write_mode) {
         as_state.size += 8;
     }
     else if (!strcmp(ins, "li")) {
-        int rd = resolve_val(a1, current_offset, false);
-        int val;
-        bool is_const = parse_arg(a2, &val);
-
-        if (!is_const || val < -2048 || val > 2047) {
+        int rd = eval_math(a1, current_offset, false);
+        
+        // <--- FIX: Always evaluate the math first!
+        int val = eval_math(a2, current_offset, false); 
+        
+        // Now check the CALCULATED value (15), not the parsed string
+        if (val < -2048 || val > 2047) {
             if (write_mode) {
-                int sym_val = resolve_val(a2, current_offset, false);
-                uint32_t lower = sym_val & 0xFFF;
-                uint32_t upper = (lower & 0x800) ? ((uint32_t)sym_val >> 12) + 1 : ((uint32_t)sym_val >> 12);
+                // Large number: LUI + ADDI
+                uint32_t lower = val & 0xFFF;
+                uint32_t upper = (lower & 0x800) ? ((uint32_t)val >> 12) + 1 : ((uint32_t)val >> 12);
                 uint32_t lui = encode_U_type(0x37, rd, upper << 12);
                 uint32_t addi = encode_I_type(0x13, 0x0, lower, rd, rd);
                 memcpy(&as_state.image[as_state.size], &lui, 4);
@@ -561,39 +628,39 @@ void process_instruction(char *line, bool write_mode) {
             }
             as_state.size += 8;
         } else {
+            // Small number: ADDI only
             if (write_mode) {
                 uint32_t bin = encode_I_type(0x13, 0x0, val, 0, rd);
                 memcpy(&as_state.image[as_state.size], &bin, 4);
             }
             as_state.size += 4;
         }
-    }
- else {
+    } else {
         if (!strcmp(ins, "j")) {
             v1 = 0;   // rd = x0
-            v2 = resolve_val(a1, current_offset, true); // offset maps to a2
+            v2 = eval_math(a1, current_offset, true); // offset maps to a2
             v3 = 0;   // unused
         } 
         else if (ins[0] == 'b') { 
-            v1 = resolve_val(a1, current_offset, false); // rs1
+            v1 = eval_math(a1, current_offset, false); // rs1
             if (!strcmp(ins, "beqz") || !strcmp(ins, "bnez")) {
                 v2 = 0; // rs2 = x0
-                v3 = resolve_val(a2, current_offset, true); // offset maps to a3
+                v3 = eval_math(a2, current_offset, true); // offset maps to a3
             } else {
-                v2 = resolve_val(a2, current_offset, false); // rs2
-                v3 = resolve_val(a3, current_offset, true);  // offset maps to a3
+                v2 = eval_math(a2, current_offset, false); // rs2
+                v3 = eval_math(a3, current_offset, true);  // offset maps to a3
             }
         }
         else if (!strcmp(ins, "jal")) {
-            v1 = resolve_val(a1, current_offset, false); // rd
-            v2 = resolve_val(a2, current_offset, true);  // offset maps to a2
+            v1 = eval_math(a1, current_offset, false); // rd
+            v2 = eval_math(a2, current_offset, true);  // offset maps to a2
             v3 = 0;
         }
         else {
             
-            v1 = resolve_val(a1, current_offset, false);
-            v2 = resolve_val(a2, current_offset, false);
-            v3 = resolve_val(a3, current_offset, false);
+            v1 = eval_math(a1, current_offset, false);
+            v2 = eval_math(a2, current_offset, false);
+            v3 = eval_math(a3, current_offset, false);
         }
 
         if (write_mode) {
