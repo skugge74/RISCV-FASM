@@ -148,6 +148,7 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
 }
         return target_addr; 
     }
+    //printf("DEBUG: Symbol '%s' not found. Returning 0.\n", name);
     return 0; 
 }
 
@@ -355,6 +356,8 @@ bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, 
 
 
 void handle_directive(char *directive, char *args, bool write_mode) {
+char *comment = strpbrk(args, ";#"); 
+    if (comment) *comment = '\0';
     if (!strcmp(directive, ".include")) {
     // Usage: .include "macros.s"
     char *start = strchr(args, '\"');
@@ -381,12 +384,9 @@ void handle_directive(char *directive, char *args, bool write_mode) {
         as_state.origin = (uint32_t)strtol(args, NULL, 0);
     }
     else if (!strcmp(directive, ".word")) {
-        // 1. Align first (so $ is accurate)
         while ((as_state.origin + as_state.size) % 4 != 0) as_state.size++;
         
         if (write_mode) {
-            // NEW: eval_math solves the equation "$-hello"
-            // We pass 'false' because we want the raw result, not a relative offset
             uint32_t val = (uint32_t)eval_math(args, as_state.size, false);
             
             memcpy(&as_state.image[as_state.size], &val, 4);
@@ -410,12 +410,9 @@ void handle_directive(char *directive, char *args, bool write_mode) {
     }
   }
 
-// .align: Uses eval_math
 else if (!strcmp(directive, ".align")) {
-    // FIX: Use eval_math so you can do .align 2+2
     int align_val = eval_math(args, as_state.size, false);
     
-    // Prevent infinite loop if align_val is 0 or bad
     if (align_val <= 0) align_val = 4; 
 
     while ((as_state.origin + as_state.size) % align_val != 0) {
@@ -425,9 +422,7 @@ else if (!strcmp(directive, ".align")) {
         as_state.size++;
     }
 }
-// .fill: Parses 3 tokens (Count, Size, Value) using eval_math
 else if (!strcmp(directive, ".fill")) {
-    // Defaults: count=0, size=1, value=0
     int vals[3] = {0, 1, 0}; 
     int idx = 0;
     
@@ -462,7 +457,6 @@ else if (!strcmp(directive, ".fill")) {
         as_state.size++;
     }
 }
-// .byte: Loops through tokens + eval_math
 else if (!strcmp(directive, ".byte")) {
     char *ptr = args;
     while (*ptr) {
@@ -485,7 +479,6 @@ else if (!strcmp(directive, ".byte")) {
         ptr = end;
     }
 }
-// .half: Loops through tokens + eval_math
 else if (!strcmp(directive, ".half")) {
     while ((as_state.origin + as_state.size) % 2 != 0) as_state.size++;
     
@@ -510,9 +503,7 @@ else if (!strcmp(directive, ".half")) {
         ptr = end;
     }
 }
-// .space: Uses eval_math
 else if (!strcmp(directive, ".space")) {
-    // FIX: Use eval_math so you can do .space 1024*2
     int num_bytes = eval_math(args, as_state.size, false);
     
     if (num_bytes < 0) {
