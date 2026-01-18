@@ -381,9 +381,14 @@ void handle_directive(char *directive, char *args, bool write_mode) {
         as_state.origin = (uint32_t)strtol(args, NULL, 0);
     }
     else if (!strcmp(directive, ".word")) {
+        // 1. Align first (so $ is accurate)
         while ((as_state.origin + as_state.size) % 4 != 0) as_state.size++;
+        
         if (write_mode) {
-            uint32_t val = (uint32_t)strtol(args, NULL, 0);
+            // NEW: eval_math solves the equation "$-hello"
+            // We pass 'false' because we want the raw result, not a relative offset
+            uint32_t val = (uint32_t)eval_math(args, as_state.size, false);
+            
             memcpy(&as_state.image[as_state.size], &val, 4);
         }
         as_state.size += 4;
@@ -404,55 +409,111 @@ void handle_directive(char *directive, char *args, bool write_mode) {
         as_state.size++;
     }
   }
-  else if (!strcmp(directive, ".align")) {
-    int align_val = (int)strtol(args, NULL, 0);
+
+// .align: Uses eval_math
+else if (!strcmp(directive, ".align")) {
+    // FIX: Use eval_math so you can do .align 2+2
+    int align_val = eval_math(args, as_state.size, false);
+    
+    // Prevent infinite loop if align_val is 0 or bad
+    if (align_val <= 0) align_val = 4; 
+
     while ((as_state.origin + as_state.size) % align_val != 0) {
         if (write_mode) {
             as_state.image[as_state.size] = 0; 
         }
         as_state.size++;
     }
-  }
+}
+// .fill: Parses 3 tokens (Count, Size, Value) using eval_math
 else if (!strcmp(directive, ".fill")) {
-    // Usage: .fill <count>, <size>, <value>
-    // Example: .fill 1024, 1, 0  (Allocates 1KB of zeros)
-    int count = 0, size = 1, value = 0;
-    sscanf(args, "%d %d %d", &count, &size, &value);
+    // Defaults: count=0, size=1, value=0
+    int vals[3] = {0, 1, 0}; 
+    int idx = 0;
+    
+    char *ptr = args;
+    while (*ptr && idx < 3) {
+        while (isspace((unsigned char)*ptr)) ptr++; // Skip spaces
+        if (!*ptr) break;
+        
+        char *end = ptr;
+        while (*end && !isspace((unsigned char)*end)) end++; // Find end of token
+        
+        char expr[128];
+        int len = end - ptr;
+        if (len > 127) len = 127;
+        strncpy(expr, ptr, len);
+        expr[len] = '\0';
+        
+        vals[idx++] = eval_math(expr, as_state.size, false);
+        ptr = end;
+    }
+
+    int count = vals[0];
+    int size = vals[1];
+    int value = vals[2];
     
     for (int i = 0; i < (count * size); i++) {
         if (write_mode) {
+            // For multi-byte fills, this writes the LSBs repeatedly. 
+            // Standard behavior varies, but this mimics .space with a fill value.
             as_state.image[as_state.size] = (uint8_t)value;
         }
         as_state.size++;
     }
 }
-  else if (!strcmp(directive, ".byte")) {
-    char *p = args;
-    while (*p) {
-        if (isdigit(*p) || (*p == '0' && *(p+1) == 'x')) {
-            uint8_t val = (uint8_t)strtol(p, &p, 0);
-            if (write_mode) as_state.image[as_state.size] = val;
-            as_state.size += 1;
-        } else p++;
+// .byte: Loops through tokens + eval_math
+else if (!strcmp(directive, ".byte")) {
+    char *ptr = args;
+    while (*ptr) {
+        while (isspace((unsigned char)*ptr)) ptr++;
+        if (!*ptr) break;
+        
+        char *end = ptr;
+        while (*end && !isspace((unsigned char)*end)) end++;
+        
+        char expr[128];
+        int len = end - ptr;
+        if (len > 127) len = 127;
+        strncpy(expr, ptr, len);
+        expr[len] = '\0';
+        
+        uint8_t val = (uint8_t)eval_math(expr, as_state.size, false);
+        if (write_mode) as_state.image[as_state.size] = val;
+        as_state.size += 1;
+        
+        ptr = end;
     }
-  }
-  else if (!strcmp(directive, ".half")) {
-    // RISC-V expects 2-byte alignment for half-words
+}
+// .half: Loops through tokens + eval_math
+else if (!strcmp(directive, ".half")) {
     while ((as_state.origin + as_state.size) % 2 != 0) as_state.size++;
     
-    char *p = args;
-    while (*p) {
-        if (isdigit(*p) || (*p == '0' && *(p+1) == 'x')) {
-            uint16_t val = (uint16_t)strtol(p, &p, 0);
-            if (write_mode) memcpy(&as_state.image[as_state.size], &val, 2);
-            as_state.size += 2;
-        } else p++;
+    char *ptr = args;
+    while (*ptr) {
+        while (isspace((unsigned char)*ptr)) ptr++;
+        if (!*ptr) break;
+        
+        char *end = ptr;
+        while (*end && !isspace((unsigned char)*end)) end++;
+        
+        char expr[128];
+        int len = end - ptr;
+        if (len > 127) len = 127;
+        strncpy(expr, ptr, len);
+        expr[len] = '\0';
+        
+        uint16_t val = (uint16_t)eval_math(expr, as_state.size, false);
+        if (write_mode) memcpy(&as_state.image[as_state.size], &val, 2);
+        as_state.size += 2;
+        
+        ptr = end;
     }
-  }
+}
+// .space: Uses eval_math
 else if (!strcmp(directive, ".space")) {
-    // Usage: .space <number_of_bytes>
-    // Example: .space 1024 (Reserves 1KB)
-    int num_bytes = (int)strtol(args, NULL, 0);
+    // FIX: Use eval_math so you can do .space 1024*2
+    int num_bytes = eval_math(args, as_state.size, false);
     
     if (num_bytes < 0) {
         printf("Assembler Error: Negative space allocation (%d)\n", num_bytes);
@@ -461,14 +522,12 @@ else if (!strcmp(directive, ".space")) {
 
     for (int i = 0; i < num_bytes; i++) {
         if (write_mode) {
-            // We pad with 0 for safety in raw binaries
             as_state.image[as_state.size] = 0;
         }
         as_state.size++;
     }
 }
 }
-
 void process_pass(FILE *fp, bool write_mode) {
     char line[MAX_LINE_LEN];
     //init_assembler_pass();
