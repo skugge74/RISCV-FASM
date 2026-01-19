@@ -1,4 +1,7 @@
 .org 0x80000000
+j _start
+
+.include "./macros/data.s"
 
 # --- 1. MACRO DEFINITIONS (Global) ---
 macro halt

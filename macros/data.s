@@ -220,6 +220,15 @@ macro print_hex_imm %1
     addi sp, sp, 8
 endm
 
+macro get_char %1
+    li t5, 0x10000000
+    .wait_loop_%u:
+        lb t6, 5(t5)
+        andi t6, t6, 1
+        beqz t6, .wait_loop_%u
+    lb %1, 0(t5)
+endm
+
 .data
 .align 4
 ln: .asciz "\n" 
