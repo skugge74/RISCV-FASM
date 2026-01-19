@@ -51,7 +51,7 @@ void simplify_punct(char *str) {
     int j = 0;
 
     for (int i = 0; str[i]; i++) {
-        if (str[i] == ',' || str[i] == '(' || str[i] == ')') {
+        if (str[i] == ',') {
             buffer[j++] = ' ';
         }
         else if (str[i] == '=') {
@@ -68,12 +68,59 @@ void simplify_punct(char *str) {
     strcpy(str, buffer); 
 }
 
+
 bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4) {
-    char clean[MAX_LINE_LEN];
-    strncpy(clean, str, MAX_LINE_LEN - 1); clean[MAX_LINE_LEN-1] = '\0';
-    char *comment = strpbrk(clean, ";#"); if (comment) *comment = '\0';
+    // 1. Clear all buffers
     *ins = *arg1 = *arg2 = *arg3 = *arg4 = '\0';
-    return sscanf(clean, "%s %s %s %s %s", ins, arg1, arg2, arg3, arg4) >= 1;
+    
+    char *buffers[] = {ins, arg1, arg2, arg3, arg4};
+    int current_buf = 0;
+    int idx = 0;
+    int parens = 0;
+    
+    // Safety limit to prevent buffer overflow (matches your array sizes)
+    const int BUF_SIZE = 127; 
+    
+    // 2. Skip leading whitespace
+    while (isspace((unsigned char)*str)) str++;
+    
+    // 3. Loop through characters
+    while (*str && current_buf < 5) {
+        char c = *str;
+
+        // Stop parsing if we hit a comment
+        if (c == ';' || c == '#') break;
+
+        if (c == '(') parens++;
+        if (c == ')') parens--;
+
+        if (isspace((unsigned char)c)) {
+            if (parens == 0) {
+                // CASE A: Space OUTSIDE parens -> Split to next argument
+                if (idx > 0) {
+                    buffers[current_buf][idx] = '\0'; // Terminate current string
+                    current_buf++;
+                    idx = 0; // Reset index for new buffer
+                    
+                    // Skip any extra whitespace (e.g., "add   t0, t1")
+                    while (isspace((unsigned char)*(str + 1))) str++;
+                }
+            } else {
+                // CASE B: Space INSIDE parens -> Keep it (it's math)
+                if (idx < BUF_SIZE) buffers[current_buf][idx++] = c;
+            }
+        } else {
+            // CASE C: Normal character -> Keep it
+            if (idx < BUF_SIZE) buffers[current_buf][idx++] = c;
+        }
+        str++;
+    }
+    
+    // Terminate the last buffer we were writing to
+    if (current_buf < 5) buffers[current_buf][idx] = '\0';
+    
+    // Return true if we found at least an instruction
+    return strlen(ins) > 0;
 }
 
 // ==========================================
@@ -221,6 +268,7 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
 
     return 0; 
 }
+
 int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
     char buffer[128];
     strncpy(buffer, expr, 127);
@@ -230,6 +278,8 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
 
     int parens = 0;
     int split_idx = -1;
+    // We start with a high number so we can find the "lowest" precedence operator.
+    // In C, operators with LOWER precedence are split FIRST (executed last).
     int lowest_prec = 999; 
 
     for (int i = 0; str[i]; i++) {
@@ -237,9 +287,27 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
         else if (str[i] == ')') parens--;
         else if (parens == 0) {
             int prec = 999;
-            if (str[i] == '+' || str[i] == '-') prec = 1;
-            else if (str[i] == '*' || str[i] == '/') prec = 2;
+
+            // --- Precedence Table (Lowest Number = Split First) ---
+            // 1. Bitwise OR (|)
+            // 2. Bitwise XOR (^)
+            // 3. Bitwise AND (&)
+            // 4. Shifts (<<, >>)
+            // 5. Add/Sub (+, -)
+            // 6. Mul/Div (*, /)
             
+            // Check for 2-char operators (<<, >>)
+            if (str[i] == '<' && str[i+1] == '<') prec = 4;
+            else if (str[i] == '>' && str[i+1] == '>') prec = 4;
+            
+            // Check for 1-char operators
+            else if (str[i] == '|') prec = 1;
+            else if (str[i] == '^') prec = 2;
+            else if (str[i] == '&') prec = 3;
+            else if (str[i] == '+' || str[i] == '-') prec = 5;
+            else if (str[i] == '*' || str[i] == '/') prec = 6;
+            
+            // If we found a valid operator with lower or equal precedence, mark it
             if (prec <= lowest_prec && prec < 999) {
                 lowest_prec = prec;
                 split_idx = i;
@@ -248,18 +316,40 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
     }
 
     if (split_idx != -1) {
-        char op = str[split_idx];
+        // Handle the split
+        int op_len = 1;
+        char op_char = str[split_idx];
+        
+        // Detect 2-char operators to advance pointer correctly
+        if ((op_char == '<' && str[split_idx+1] == '<') || 
+            (op_char == '>' && str[split_idx+1] == '>')) {
+            op_len = 2;
+        }
+
         str[split_idx] = '\0'; 
         
+        // Recursively evaluate Left and Right sides
         int left = eval_math(str, current_offset, false);
-        int right = eval_math(str + split_idx + 1, current_offset, false);
+        int right = eval_math(str + split_idx + op_len, current_offset, false);
 
         int result = 0;
-        switch (op) {
-            case '+': result = left + right; break;
-            case '-': result = left - right; break;
-            case '*': result = left * right; break;
-            case '/': result = (right != 0) ? (left / right) : 0; break;
+        
+        // Handle Shifts first (2 chars)
+        if (op_len == 2) {
+             if (op_char == '<') result = left << right;
+             else result = left >> right;
+        } 
+        // Handle Standard Operators
+        else {
+            switch (op_char) {
+                case '|': result = left | right; break;
+                case '^': result = left ^ right; break;
+                case '&': result = left & right; break;
+                case '+': result = left + right; break;
+                case '-': result = left - right; break;
+                case '*': result = left * right; break;
+                case '/': result = (right != 0) ? (left / right) : 0; break;
+            }
         }
 
         if (is_relative) {
@@ -268,11 +358,13 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
         return result;
     }
 
+    // Handle Parentheses: (1+2) -> 1+2
     if (str[0] == '(' && str[strlen(str)-1] == ')') {
         str[strlen(str)-1] = '\0'; 
         return eval_math(str + 1, current_offset, is_relative); 
     }
 
+    // Base Case: Number or Symbol
     return resolve_val(str, current_offset, is_relative);
 }
 
@@ -426,12 +518,22 @@ void handle_directive(char *directive, char *args, bool write_mode) {
     }
     else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
         // Usage: .equ NAME, VALUE
-        // Example: .equ TEST, 10
         char name[64];
-        char value_str[64];
-        // sscanf parses the two arguments (separated by space due to simplify_punct)
-        if (sscanf(args, "%s %s", name, value_str) == 2) {
-            int val = eval_math(value_str, as_state.size, false);
+        
+        // 1. Parse the name (first token)
+        char *ptr = args;
+        while (isspace((unsigned char)*ptr)) ptr++;
+        
+        int i = 0;
+        while (*ptr && !isspace((unsigned char)*ptr) && i < 63) {
+            name[i++] = *ptr++;
+        }
+        name[i] = '\0';
+
+        // 2. The rest of the string is the value expression
+        // eval_math handles the spaces/math internally
+        if (i > 0) {
+            int val = eval_math(ptr, as_state.size, false);
             add_or_update_variable(name, val);
         }
     }
@@ -504,7 +606,7 @@ void process_instruction(char *line, bool write_mode) {
     
     if (work[0] == '\0' || work[0] == ';' || work[0] == '#') return;
 
-    char ins[32], a1[32], a2[32], a3[32], a4[32];
+    char ins[64], a1[128], a2[128], a3[128], a4[128];
     if (!split_line(work, ins, a1, a2, a3, a4)) return;
 
     uint32_t current_offset = as_state.size;
@@ -547,9 +649,12 @@ void process_instruction(char *line, bool write_mode) {
     int v1 = 0, v2 = 0, v3 = 0;
 
     if (!strcmp(ins, "la")) {
+        char math_buf[128];
+        snprintf(math_buf, 128, "%s%s%s", a2, a3, a4); // Recombine
+
         int rd = eval_math(a1, current_offset, false);
         if (write_mode) {
-            int addr = eval_math(a2, current_offset, false);
+            int addr = eval_math(math_buf, current_offset, false); // Use math_buf
             uint32_t lower = addr & 0xFFF;
             uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
@@ -585,8 +690,12 @@ else if (!strcmp(ins, "call")) {
         return; 
     }
     else if (!strcmp(ins, "li")) {
+        // Recombine potentially split arguments (e.g. "1 + 2")
+        char math_buf[128];
+        snprintf(math_buf, 128, "%s%s%s", a2, a3, a4);
+
         int rd = eval_math(a1, current_offset, false);
-        int val = eval_math(a2, current_offset, false); 
+        int val = eval_math(math_buf, current_offset, false); 
         
         if (val < -2048 || val > 2047) {
             if (write_mode) {
@@ -605,8 +714,40 @@ else if (!strcmp(ins, "call")) {
             }
             as_state.size += 4;
         }
-        return; 
+        return; // Return early
     } 
+
+    else if (strchr(a2, '(') && strchr(a2, ')')) {
+        // Syntax: inst reg, offset(base)
+        // Example: sw t0, 0(sp)
+        // a1 = "t0", a2 = "0(sp)"
+
+        v1 = eval_math(a1, current_offset, false); 
+
+        char *paren = strchr(a2, '(');
+        *paren = '\0'; 
+        
+        char *reg_end = strchr(paren + 1, ')');
+        if (reg_end) *reg_end = '\0'; 
+
+        
+        int base = eval_math(paren + 1, current_offset, false); // "sp" -> 2
+        int offset = eval_math(a2, current_offset, false);      // "0" -> 0
+
+        v2 = offset;
+        v3 = base;
+        
+        uint32_t bin = encode_instruction(ins, v1, v2, v3);
+        
+        if (bin != 0) {
+            if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4);
+            as_state.size += 4;
+        } else {
+            panic("Invalid memory instruction: %s", ins);
+        }
+        return;
+    }
+
     else {
         if (!strcmp(ins, "j")) {
             v2 = eval_math(a1, current_offset, true); 
@@ -627,10 +768,12 @@ else if (!strcmp(ins, "call")) {
         else {
             v1 = eval_math(a1, current_offset, false);
             v2 = eval_math(a2, current_offset, false);
-            v3 = eval_math(a3, current_offset, false);
-        }
-
-        // --- ENCODE & CHECK FOR ERROR ---
+            
+            // Recombine a3 and a4 for the 3rd argument (Immediate)
+            char math_buf[128];
+            snprintf(math_buf, 128, "%s%s", a3, a4);
+            v3 = eval_math(math_buf, current_offset, false);
+        }        // --- ENCODE & CHECK FOR ERROR ---
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
 
         if (bin != 0) {

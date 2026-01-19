@@ -7,11 +7,13 @@ macro testing %1 %2
   li %1, %2
 endm
 
+.text
+.align 4
 _start:
     li sp, 0x80100000   # Initialize Stack
     li s1, 0x10000000   # UART Base
  
-    li t7, 10+5         # Should be 15 (0xF)
+    li t0, 10+5         # Should be 15 (0xF)
     print_int_reg t0
     print_str ln
     li t1, _start+8
@@ -37,6 +39,9 @@ _start:
     testing t6 4/2*3+1  # 7
     print_int_reg t6
     print_str ln
+    print_str ln
+    print_str ln
+
     halt
 
 .data
