@@ -124,6 +124,31 @@ int find_symbol(const char *name) {
     }
     return -1; 
 }
+
+void add_or_update_variable(const char* name, int value) {
+    // 1. Search for existing symbol to OVERWRITE
+    // We search backwards because usually we modify the most recent variables
+    for (int i = 0; i < symbol_count; i++) {
+        if (strcmp(symbol_table[i].name, name) == 0) {
+            symbol_table[i].address = value; // Update the value directly (Raw int)
+            return;
+        }
+    }
+
+    // 2. If not found, create new one
+    if (symbol_count >= MAX_SYMBOLS) return;
+
+    // For variables, we usually just use the raw name (Global scope)
+    // If you want scoped variables (like .my_var), you can copy your parent-name logic here.
+    strncpy(symbol_table[symbol_count].name, name, 127);
+    symbol_table[symbol_count].name[127] = '\0';
+    
+    // Store RAW value (Do NOT add as_state.origin)
+    symbol_table[symbol_count].address = value; 
+    
+    symbol_count++;
+}
+
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     if (strcmp(name, "$") == 0) {
         int current_addr = as_state.origin + current_offset;
@@ -341,7 +366,25 @@ bool parse_arg(const char *arg, int *out_val) {
     return false;
 }
 void simplify_punct(char *str) {
-    for (int i = 0; str[i]; i++) if (str[i] == ',' || str[i] == '(' || str[i] == ')') str[i] = ' ';
+    char buffer[MAX_LINE_LEN * 2]; 
+    int j = 0;
+
+    for (int i = 0; str[i]; i++) {
+        if (str[i] == ',' || str[i] == '(' || str[i] == ')') {
+            buffer[j++] = ' ';
+        }
+        else if (str[i] == '=') {
+            buffer[j++] = ' ';
+            buffer[j++] = '=';
+            buffer[j++] = ' ';
+        }
+        else {
+            buffer[j++] = str[i];
+        }
+    }
+    
+    buffer[j] = '\0';
+    strcpy(str, buffer); 
 }
 
 bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4) {
@@ -634,6 +677,21 @@ void process_instruction(char *line, bool write_mode) {
         strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
     }
 
+if (strcmp(a1, "=") == 0) {
+        char *eq_pos = strchr(work, '='); 
+        if (eq_pos) {
+            char *math_expression = eq_pos + 1; 
+            char *comment = strpbrk(math_expression, ";#");
+            if (comment) *comment = '\0';
+            while (*math_expression == ' ' || *math_expression == '\t') {
+                math_expression++;
+            }
+            
+            int val = eval_math(math_expression, current_offset, false);
+            add_or_update_variable(ins, val);
+        }
+        return; 
+    }
  
     if (ins[0] == '.') {
         char *args_ptr = strstr(line, ins) + strlen(ins);

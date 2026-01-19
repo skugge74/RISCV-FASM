@@ -2,7 +2,7 @@
 j _start
 
 .include "./included.s"
-.include "./data.s"     
+.include "../macros/data.s"     
 
 .text
 .align 4

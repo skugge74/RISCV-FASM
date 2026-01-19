@@ -3,6 +3,10 @@ macro halt
     j .halt_%u
 endm
 
+macro init_uart
+    li sp, 0x80100000
+    li s1, 0x10000000
+endm
 ; Usage: MAX dest, val_a, val_b
 macro max %1, %2, %3
     ; Check if val_a (%2) < val_b (%3)
@@ -215,3 +219,7 @@ macro print_hex_imm %1
     lw t0, 0(sp)
     addi sp, sp, 8
 endm
+
+.data
+.align 4
+ln: .asciz "\n" 

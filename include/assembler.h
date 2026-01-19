@@ -43,6 +43,7 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3);
 
 void add_symbol(const char* name, uint32_t offset);
 int find_symbol(const char* name);
+void add_or_update_variable(const char* name, int value);
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative);
 
 void simplify_punct(char *str);
