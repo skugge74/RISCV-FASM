@@ -12,7 +12,7 @@ It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-meta
 - Arguments: Pass registers or immediates using `%1`, `%2`, etc.
 
 2) Recursive Math Engine
-- Expression Parsing: Supports complex arithmetic natively. `li t0, 10 + 5 * 2` Evaluates to `20`.
+- Expression Parsing: Supports complex arithmetic natively. `li t0, 10 + 5 * 2 << 3` Evaluates to `160`.
 - Location Counters: 
     - `$`: Current Address (Dynamic, moves with every instruction).
     - `$$`: Section Origin (Static).
