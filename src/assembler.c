@@ -649,12 +649,10 @@ void process_instruction(char *line, bool write_mode) {
     int v1 = 0, v2 = 0, v3 = 0;
 
     if (!strcmp(ins, "la")) {
-        char math_buf[128];
-        snprintf(math_buf, 128, "%s%s%s", a2, a3, a4); // Recombine
 
         int rd = eval_math(a1, current_offset, false);
         if (write_mode) {
-            int addr = eval_math(math_buf, current_offset, false); // Use math_buf
+            int addr = eval_math(a2, current_offset, false); // Use math_buf
             uint32_t lower = addr & 0xFFF;
             uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
@@ -691,11 +689,9 @@ else if (!strcmp(ins, "call")) {
     }
     else if (!strcmp(ins, "li")) {
         // Recombine potentially split arguments (e.g. "1 + 2")
-        char math_buf[128];
-        snprintf(math_buf, 128, "%s%s%s", a2, a3, a4);
 
         int rd = eval_math(a1, current_offset, false);
-        int val = eval_math(math_buf, current_offset, false); 
+        int val = eval_math(a2, current_offset, false); 
         
         if (val < -2048 || val > 2047) {
             if (write_mode) {
@@ -768,11 +764,7 @@ else if (!strcmp(ins, "call")) {
         else {
             v1 = eval_math(a1, current_offset, false);
             v2 = eval_math(a2, current_offset, false);
-            
-            // Recombine a3 and a4 for the 3rd argument (Immediate)
-            char math_buf[128];
-            snprintf(math_buf, 128, "%s%s", a3, a4);
-            v3 = eval_math(math_buf, current_offset, false);
+            v3 = eval_math(a3, current_offset, false);
         }        // --- ENCODE & CHECK FOR ERROR ---
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
 
