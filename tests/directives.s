@@ -23,6 +23,12 @@ macro lw %1, %2
     la %1, %2
     lw %1, 0(%1)
 endm
+
+
+
+.equ TEST, 10
+
+
 .text
 .align 4
 _start:
@@ -48,7 +54,9 @@ _start:
     # 4. Check .fill math (Should skip 10 bytes of 0xFF)
     lbu t3, fill_check
     print_hex_reg t3   # Should be 0xAA, proving we jumped over the fill
-    
+   
+    print_str ln
+    print_int_imm TEST
     halt
 
 .data

@@ -424,6 +424,17 @@ void handle_directive(char *directive, char *args, bool write_mode) {
             panic("Include file not found: %s", filename);
         }
     }
+    else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
+        // Usage: .equ NAME, VALUE
+        // Example: .equ TEST, 10
+        char name[64];
+        char value_str[64];
+        // sscanf parses the two arguments (separated by space due to simplify_punct)
+        if (sscanf(args, "%s %s", name, value_str) == 2) {
+            int val = eval_math(value_str, as_state.size, false);
+            add_or_update_variable(name, val);
+        }
+    }
     else if (!strcmp(directive, ".text")) as_state.current_section = SECTION_TEXT;
     else if (!strcmp(directive, ".data")) as_state.current_section = SECTION_DATA;
     else if (!strcmp(directive, ".org")) {
@@ -704,7 +715,7 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
         
      
         if (ins[0] == '.' && ins[strlen(ins)-1] != ':') {
-            char *args_ptr = strstr(line, ins) + strlen(ins);
+            char *args_ptr = strstr(work, ins) + strlen(ins);
             handle_directive(ins, args_ptr, write_mode);
             continue; 
         }

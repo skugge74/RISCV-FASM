@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
   
     init_assembler_pass();
     process_pass(in, true, argv[2]);
-    //dump_symbol_table();
+    dump_symbol_table();
     if (!compile)exit(1);
     save_binary(argv[2]);
 
