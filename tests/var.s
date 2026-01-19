@@ -15,7 +15,7 @@ _start:
     li sp, 0x80100000
     li s1, 0x10000000
 
-    li t0, OFFSET       ; Should compile to: li t0, 2
+    li t6, OFFSET       ; Should compile to: li t0, 2
     print_int_reg t0 
     print_str ln 
     

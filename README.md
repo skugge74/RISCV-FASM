@@ -16,6 +16,16 @@ It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-meta
 - Location Counters: 
     - `$`: Current Address (Dynamic, moves with every instruction).
     - `$$`: Section Origin (Static).
+3) Stateful Preprocessor & Data Modeling
+- Mutable Variables: Introduces compile-time variables (`=`) that can be reassigned (e.g., `OFFSET = OFFSET + 4`), enabling dynamic calculation of constants during assembly.
+
+- C-Style Structs: Native support for defining complex data structures (`struct`, `field`, `endstruct`) with automatic offset management.
+
+- Memory Layout Engine: Automatically calculates total object sizes (`Struct_SIZE`) and handles array reservations (`array buffer, 128`), eliminating manual offset math.
+
+- Zero-Overhead Abstraction: All calculations happen at compile time, resolving to hardcoded constants in the binary with no runtime performance penalty. 
+
+4) Other things
 - Relative Logic: Calculates branch offsets automatically (beq x0, x0, $+8).
 - CSR Support: Full support for Control Status Registers (csrr, csrw) for OS development.
 - Smart Pseudo-Ops: Automatically expands li into lui + addi for large numbers (> 12 bits).
@@ -89,7 +99,56 @@ usage example
 .data 
 msg: .asciz "Hi"
 ```
-# Directives & Math
+## Compile-Time Variables & Mutable State
+The Variable System (`=`) operates entirely at compile-time. Unlike labels, these variables are mutable.
+
+### Syntax and behaviour
+
+Use the `=` operator to create or update a variable. The value is calculated immediately and stored in the symbol table.
+
+```assembly
+OFFSET = 1                ; Define variable 'OFFSET' with value 1
+OFFSET = OFFSET + 4       ; Update 'OFFSET' (1 + 4 = 5)
+li t0, OFFSET*2           ; t0 <- 10 (5*2)
+MAX_VAL = 10 * 2          ; Math is evaluated immediately (20)
+OFFSET = OFFSET + MAX_VAL ; OFFSET <- 25 (5+20)
+li t1, OFFSET             ; t1 <- 25
+```
+
+### struct macro definition 
+```assembly
+; Initialize a new structure
+macro struct %1
+    STRUCT_PTR = 0           ; Reset the global counter
+endm
+
+; Define a field
+; Usage: field Name, Size
+macro field %1, %2
+    %1 = STRUCT_PTR          ; Define the Constant (e.g. M_HP = 4)
+    STRUCT_PTR = STRUCT_PTR + %2 ; Update the Variable (4 + 4 = 8)
+endm
+
+; Finalize the structure
+macro endstruct %1
+    %1_SIZE = STRUCT_PTR     ; Save the final total size
+endm
+```
+### struct Usage example
+```assembly
+struct Packet
+    field ID, 4         ; ID = 0
+    array DATA, 128     ; DATA = 4
+    field CRC, 4        ; CRC = 132 (4 + 128)
+endstruct Packet        ; Packet_SIZE = 136
+
+
+_start:
+    li t0, Packet_SIZE  ; Loads 136
+    li t1, CRC          ; Loads 132
+```
+
+## Directives & Math
 
 ### Directives
 

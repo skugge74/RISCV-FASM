@@ -1,7 +1,7 @@
 .org 0x80000000
 j _start
 
-.include "./data.s"
+.include "./macros/data.s"
 # Shadowing standard 'lb' to support labels
 macro lb %1, %2
     la %1, %2       # Load the calculated address into the target register
