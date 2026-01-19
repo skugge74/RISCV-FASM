@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     // This populates addresses for both .text and .data labels
   
     init_assembler_pass();
-    process_pass(in, false);
+    process_pass(in, false, argv[2]);
     dump_symbol_table();
     // Rewind for the second pass
     rewind(in);
@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     // PASS 2: Encode instructions and data into internal buffers
   
     init_assembler_pass();
-    process_pass(in, true);
+    process_pass(in, true, argv[2]);
     dump_symbol_table();
     // FINAL STEP: Write the accumulated buffers to the output file
     // This merges the .text and .data sections into the final hex file

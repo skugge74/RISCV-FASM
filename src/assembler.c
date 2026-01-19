@@ -195,7 +195,9 @@ bool parse_arg(const char *arg, int *out_val) {
     
     return false;
 }
+
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
+
     // 1. Handle Special Location Counters
     if (strcmp(name, "$") == 0) {
         int current_addr = as_state.origin + current_offset;
@@ -207,6 +209,7 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     }
 
     // 2. Try parsing as a Register or Number
+    // (This ensures we don't look up "x1" or "100" in the symbol table)
     int val;
     if (parse_arg(name, &val)) return val; 
 
@@ -221,17 +224,19 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     }
 
     // ============================================================
-    // THE FIX: Strict Error Checking in Pass 2
+    // ERROR CHECKING LOGIC
     // ============================================================
     if (current_pass == 2) {
-        // We are in the final pass. If the symbol isn't found now,
-        // it will never be found. It is definitely an error.
-        panic("Undefined symbol or invalid register: '%s'", name);
+        // If we are in Pass 2 and find_symbol returned -1, the label 
+        // does not exist. This is a fatal error.
+        panic("Undefined symbol: '%s'", name);
     }
 
-    // In Pass 1, we return 0 primarily to allow forward references.
+    // In Pass 1, we return 0 for unknown symbols to allow forward references.
+    // The value will be resolved correctly in Pass 2.
     return 0; 
-}int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
+}
+int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
     char buffer[128];
     strncpy(buffer, expr, 127);
     char *str = trim_whitespace(buffer); 
@@ -512,7 +517,18 @@ void process_instruction(char *line, bool write_mode) {
     // 2. Handle Labels
     if (ins[strlen(ins)-1] == ':') {
         ins[strlen(ins)-1] = '\0';
-        if (!write_mode) add_symbol(ins, current_offset);
+        
+        if (!write_mode) {
+            // Pass 1: Add symbol and update current_parent
+            add_symbol(ins, current_offset);
+        } else {
+            // Pass 2: We don't add symbols, BUT we must update 
+            // current_parent so local label lookups work!
+            if (ins[0] != '.') {
+                 strncpy(current_parent, ins, 63);
+            }
+        }
+        
         if (strlen(a1) == 0) return;
         strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
     }
@@ -555,6 +571,40 @@ void process_instruction(char *line, bool write_mode) {
         }
         as_state.size += 8;
         return; // Return early
+    }
+else if (!strcmp(ins, "call")) {
+        // Usage: call <label>
+        // Logic: Calculates PC-relative offset and splits into AUIPC + JALR
+        
+        // 1. Calculate Relative Offset (Target Address - Current PC)
+        int offset = eval_math(a1, current_offset, true);
+
+        if (write_mode) {
+            // 2. Handle the "12th bit" Sign Extension Trap
+            // Because the CPU sign-extends the 12-bit lower immediate, 
+            // if the 12th bit is 1, it subtracts 1 from the upper bits.
+            // We must pre-add 1 to 'upper' to compensate.
+            uint32_t lower = offset & 0xFFF;
+            uint32_t upper = (uint32_t)offset >> 12;
+
+            if (lower & 0x800) {
+                upper += 1;
+            }
+
+            // 3. Encode AUIPC ra, upper (ra = x1)
+            // Opcode 0x17
+            uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12);
+
+            // 4. Encode JALR ra, ra, lower (ra = x1)
+            // Opcode 0x67, func3 = 0
+            uint32_t bin_jalr = encode_I_type(0x67, 0x0, lower, 1, 1);
+
+            // Write both
+            memcpy(&as_state.image[as_state.size], &bin_auipc, 4);
+            memcpy(&as_state.image[as_state.size + 4], &bin_jalr, 4);
+        }
+        as_state.size += 8; // Always consumes 8 bytes
+        return; 
     }
     else if (!strcmp(ins, "li")) {
         int rd = eval_math(a1, current_offset, false);

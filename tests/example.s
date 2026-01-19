@@ -40,11 +40,9 @@ endm
 _start:
     li sp, 0x80100000   # Initialize Stack
     li s1, 0x10000000   # UART Base
-
 repeat 10
   print_str msg    
 endrepeat
-
 halt
 
 # --- 3. DATA SECTION ---
