@@ -14,25 +14,19 @@ int main(int argc, char **argv) {
         return 1; 
     }
 
-    // Initialize the global assembler state (Clear buffers and set section to .text)
     init_assembler_total();
 
-    // PASS 1: Build the Symbol Table
-    // This populates addresses for both .text and .data labels
   
     init_assembler_pass();
     process_pass(in, false, argv[2]);
-    dump_symbol_table();
-    // Rewind for the second pass
+    //dump_symbol_table();
     rewind(in);
 
-    // PASS 2: Encode instructions and data into internal buffers
   
     init_assembler_pass();
     process_pass(in, true, argv[2]);
-    dump_symbol_table();
-    // FINAL STEP: Write the accumulated buffers to the output file
-    // This merges the .text and .data sections into the final hex file
+    //dump_symbol_table();
+    if (!compile)exit(1);
     save_binary(argv[2]);
 
     fclose(in);

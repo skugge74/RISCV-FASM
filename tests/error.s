@@ -40,15 +40,15 @@ _start:
     
     # ERROR A: Invalid Register 't7'
     # Expected: [ERROR] ... Undefined symbol: 't7'
-    # li s20, 100        
+     li s20, 100        
 
     # ERROR B: Undefined Label
     # Expected: [ERROR] ... Undefined symbol: 'nowhere'
-    # j nowhere
+     j nowhere
 
     # ERROR C: Invalid Register Index (x32)
     # Expected: [ERROR] ... Undefined symbol: 'x32'
-    # add x32, x1, x2
+     add x32, x1, x2
 
     # --------------------------------------
     # FINISH

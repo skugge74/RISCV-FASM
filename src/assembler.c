@@ -16,8 +16,7 @@ Symbol symbol_table[MAX_SYMBOLS];
 int symbol_count = 0;
 char current_parent[64] = "global";
 Assembler as_state;
-
-// Error Context
+bool compile = true;
 int current_line = 0;
 const char *current_file = "unknown";
 int current_pass = 0;      // 1 or 2
@@ -27,12 +26,12 @@ int current_pass = 0;      // 1 or 2
 // ==========================================
 void panic(const char *fmt, ...) {
     va_list args;
-    fprintf(stderr, "\n\033[1;31m[ERROR] %s:%d (Pass %d): \033[0m", current_file, current_line, current_pass);
+    fprintf(stderr, "\033[1;31m[ERROR] %s:%d (Pass %d): \033[0m", current_file, current_line, current_pass);
     va_start(args, fmt);
     vfprintf(stderr, fmt, args);
     va_end(args);
     fprintf(stderr, "\n");
-    exit(1); 
+    compile = false;
 }
 
 // ==========================================
@@ -145,15 +144,13 @@ bool parse_arg(const char *arg, int *out_val) {
     if (!arg || *arg == '\0') return false;
     while (isspace((unsigned char)*arg)) arg++;
 
-    // 1. Raw Registers (x0 - x31)
     if (arg[0] == 'x' && isdigit(arg[1])) { 
         int n = atoi(arg + 1);
-        if (n > 31) return false; // Fail if x32+
+        if (n > 31) return false; 
         *out_val = n; 
         return true; 
     }
 
-    // 2. Named Registers
     if (!strcmp(arg, "zero")) { *out_val = 0; return true; }
     if (!strcmp(arg, "ra"))   { *out_val = 1; return true; }
     if (!strcmp(arg, "sp"))   { *out_val = 2; return true; }
@@ -161,33 +158,29 @@ bool parse_arg(const char *arg, int *out_val) {
     if (!strcmp(arg, "tp"))   { *out_val = 4; return true; }
     if (!strcmp(arg, "fp"))   { *out_val = 8; return true; }
 
-    // 3. Temporaries (t0-t6 only!)
     if (arg[0] == 't' && isdigit(arg[1])) {
         int n = atoi(arg + 1);
-        if (n > 6) return false; // <--- FIX: Stop t7, t8...
+        if (n > 6) return false;
         *out_val = (n <= 2) ? (n + 5) : (n + 25);
         return true;
     }
 
-    // 4. Saved Registers (s0-s11 only!)
     if (arg[0] == 's' && isdigit(arg[1])) {
         int n = atoi(arg + 1);
-        if (n > 11) return false; // <--- FIX: Stop s12...
+        if (n > 11) return false; 
         if (n == 0) *out_val = 8;
         else if (n == 1) *out_val = 9;
         else *out_val = n + 16;
         return true;
     }
 
-    // 5. Argument Registers (a0-a7 only!)
     if (arg[0] == 'a' && isdigit(arg[1])) {
         int n = atoi(arg + 1);
-        if (n > 7) return false; // <--- FIX: Stop a8...
+        if (n > 7) return false; 
         *out_val = n + 10;
         return true;
     }
 
-    // 6. Immediates / Hex / Dec
     if (isdigit(*arg) || (*arg == '-' && isdigit(*(arg + 1)))) {
         *out_val = (int)strtol(arg, NULL, 0);
         return true;
@@ -198,22 +191,18 @@ bool parse_arg(const char *arg, int *out_val) {
 
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
 
-    // 1. Handle Special Location Counters
     if (strcmp(name, "$") == 0) {
         int current_addr = as_state.origin + current_offset;
         return is_relative ? 0 : current_addr;
     }
     if (strcmp(name, "$$") == 0) {
         int section_base = as_state.origin;
-        return is_relative ? section_base - (as_state.origin + current_offset) : section_base;
+        return is_relative ? (int)(section_base - (as_state.origin + current_offset)) : section_base;
     }
 
-    // 2. Try parsing as a Register or Number
-    // (This ensures we don't look up "x1" or "100" in the symbol table)
     int val;
     if (parse_arg(name, &val)) return val; 
 
-    // 3. Try finding in Symbol Table
     int target_addr = find_symbol(name);
     if (target_addr != -1) {
         if (is_relative) {
@@ -227,13 +216,9 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
     // ERROR CHECKING LOGIC
     // ============================================================
     if (current_pass == 2) {
-        // If we are in Pass 2 and find_symbol returned -1, the label 
-        // does not exist. This is a fatal error.
         panic("Undefined symbol: '%s'", name);
     }
 
-    // In Pass 1, we return 0 for unknown symbols to allow forward references.
-    // The value will be resolved correctly in Pass 2.
     return 0; 
 }
 int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
@@ -506,7 +491,6 @@ void process_instruction(char *line, bool write_mode) {
     strcpy(work, line); 
     simplify_punct(work);
     
-    // 1. Skip Empty/Comments
     if (work[0] == '\0' || work[0] == ';' || work[0] == '#') return;
 
     char ins[32], a1[32], a2[32], a3[32], a4[32];
@@ -514,16 +498,12 @@ void process_instruction(char *line, bool write_mode) {
 
     uint32_t current_offset = as_state.size;
 
-    // 2. Handle Labels
     if (ins[strlen(ins)-1] == ':') {
         ins[strlen(ins)-1] = '\0';
         
         if (!write_mode) {
-            // Pass 1: Add symbol and update current_parent
             add_symbol(ins, current_offset);
         } else {
-            // Pass 2: We don't add symbols, BUT we must update 
-            // current_parent so local label lookups work!
             if (ins[0] != '.') {
                  strncpy(current_parent, ins, 63);
             }
@@ -533,7 +513,6 @@ void process_instruction(char *line, bool write_mode) {
         strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
     }
 
-    // 3. Handle Variables (=)
     if (strcmp(a1, "=") == 0) {
         char *eq_pos = strchr(work, '='); 
         if (eq_pos) {
@@ -546,7 +525,6 @@ void process_instruction(char *line, bool write_mode) {
         return; 
     }
  
-    // 4. Handle Directives
     if (ins[0] == '.') {
         char *args_ptr = strstr(line, ins) + strlen(ins);
         handle_directive(ins, args_ptr, write_mode);
@@ -555,7 +533,6 @@ void process_instruction(char *line, bool write_mode) {
 
     if (as_state.current_section == SECTION_DATA) return;
 
-    // 5. Instruction Encoding
     int v1 = 0, v2 = 0, v3 = 0;
 
     if (!strcmp(ins, "la")) {
@@ -570,20 +547,15 @@ void process_instruction(char *line, bool write_mode) {
             memcpy(&as_state.image[as_state.size + 4], &addi, 4);
         }
         as_state.size += 8;
-        return; // Return early
+        return; 
     }
 else if (!strcmp(ins, "call")) {
         // Usage: call <label>
         // Logic: Calculates PC-relative offset and splits into AUIPC + JALR
         
-        // 1. Calculate Relative Offset (Target Address - Current PC)
         int offset = eval_math(a1, current_offset, true);
 
         if (write_mode) {
-            // 2. Handle the "12th bit" Sign Extension Trap
-            // Because the CPU sign-extends the 12-bit lower immediate, 
-            // if the 12th bit is 1, it subtracts 1 from the upper bits.
-            // We must pre-add 1 to 'upper' to compensate.
             uint32_t lower = offset & 0xFFF;
             uint32_t upper = (uint32_t)offset >> 12;
 
@@ -591,19 +563,14 @@ else if (!strcmp(ins, "call")) {
                 upper += 1;
             }
 
-            // 3. Encode AUIPC ra, upper (ra = x1)
-            // Opcode 0x17
             uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12);
 
-            // 4. Encode JALR ra, ra, lower (ra = x1)
-            // Opcode 0x67, func3 = 0
             uint32_t bin_jalr = encode_I_type(0x67, 0x0, lower, 1, 1);
 
-            // Write both
             memcpy(&as_state.image[as_state.size], &bin_auipc, 4);
             memcpy(&as_state.image[as_state.size + 4], &bin_jalr, 4);
         }
-        as_state.size += 8; // Always consumes 8 bytes
+        as_state.size += 8; 
         return; 
     }
     else if (!strcmp(ins, "li")) {
@@ -627,10 +594,9 @@ else if (!strcmp(ins, "call")) {
             }
             as_state.size += 4;
         }
-        return; // Return early
+        return; 
     } 
     else {
-        // Prepare Standard Instruction Arguments
         if (!strcmp(ins, "j")) {
             v2 = eval_math(a1, current_offset, true); 
         } 
@@ -663,7 +629,7 @@ else if (!strcmp(ins, "call")) {
             as_state.size += 4;
         } 
         else {
-            // Panic!
+            
             panic("Unknown instruction or syntax error: '%s'", ins);
         }
     }   
@@ -691,13 +657,13 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
         strcpy(work, line);
         simplify_punct(work);
         
-        // Skip early
+        
         if (work[0] == '\0' || work[0] == ';' || work[0] == '#') continue;
 
         char ins[32], a1[32], a2[32], a3[32], a4[32];
         if (!split_line(work, ins, a1, a2, a3, a4)) continue;
         
-        // 1. Define Macro
+       
         if (!strcmp(ins, "macro")) {
             defining_macro = true;
             strcpy(macro_lib[macro_lib_count].name, a1);
@@ -714,7 +680,7 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
             continue;
         }
 
-        // 2. Expand Macro
+      
         int m_idx = find_macro(ins);
         if (m_idx != -1) {
             int current_id;
@@ -736,14 +702,14 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
             continue;
         }
         
-        // 3. Directives (outside macros)
+     
         if (ins[0] == '.' && ins[strlen(ins)-1] != ':') {
             char *args_ptr = strstr(line, ins) + strlen(ins);
             handle_directive(ins, args_ptr, write_mode);
             continue; 
         }
 
-        // 4. Instructions
+    
         if (stack_ptr >= 0) {
             int current_id = peek_id();
             substitute_args_with_id(line, "", "", "", "", current_id);
