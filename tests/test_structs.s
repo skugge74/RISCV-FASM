@@ -10,7 +10,7 @@ struct Monster
     field M_HP,   2    ; Offset 4
     field M_ATK,  4    ; Offset 8
     field M_POS,  10    ; Offset 12
-endstruct Monster      ; Size 16
+endstruct Monster      ; Size 17
 
 .text
 .align 4
@@ -19,7 +19,7 @@ _start:
 
     ; 1. Print Total Size
     li t0, Monster_SIZE
-    print_int_reg t0    ; Should print 16
+    print_int_reg t0    ; Should print 17
     print_str ln
 
     ; 2. Print Offsets

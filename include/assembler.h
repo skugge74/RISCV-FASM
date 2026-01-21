@@ -62,5 +62,6 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative);
 char* trim_whitespace(char* str);
 void process_line(char *line, bool write_mode);
 
+void process_line(char *line, bool write_mode);
 void panic(const char *fmt, ...);
 #endif

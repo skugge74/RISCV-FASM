@@ -19,7 +19,7 @@ OBJS      := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
 # Default assembly file if none provided
 FILE    ?= tests/example.s
-HEX_OUT := $(FILE:.s=.hex)
+HEX_OUT := $(FILE:.s=.bin)
 
 # --- Rules ---
 
@@ -64,6 +64,6 @@ $(BUILD_DIR):
 
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR) $(TARGET) $(TEST_DIR)/*.hex
+	@rm -rf $(BUILD_DIR) $(TARGET) $(TEST_DIR)/*.bin
 
 .PHONY: all run dump clean

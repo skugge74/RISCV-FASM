@@ -599,33 +599,135 @@ void handle_directive(char *directive, char *args, bool write_mode) {
     }
 }
 
-void process_instruction(char *line, bool write_mode) {
+
+void process_pass(FILE *fp, bool write_mode, const char* filename) {
+    current_pass = write_mode ? 2 : 1;
+    current_file = filename;
+    current_line = 0;
+
+    char line[MAX_LINE_LEN];
+    rewind(fp);
+
+    unique_id_counter = 0;
+    stack_ptr = -1;
+    defining_macro = false;
+
+    while (fgets(line, sizeof(line), fp)) {
+        current_line++;
+        line[strcspn(line, "\r\n")] = '\0';
+        
+        char work[MAX_LINE_LEN];
+        strcpy(work, line);
+        simplify_punct(work);
+        
+        if (work[0] == '\0' || work[0] == ';' || work[0] == '#') continue;
+
+        char ins[32], a1[32], a2[32], a3[32], a4[32];
+        if (!split_line(work, ins, a1, a2, a3, a4)) continue;
+        
+        // 1. Macro Definition (Must be handled here, not recursively)
+        if (!strcmp(ins, "macro")) {
+            defining_macro = true;
+            strcpy(macro_lib[macro_lib_count].name, a1);
+            macro_lib[macro_lib_count].line_count = 0;
+            continue;
+        }
+        if (!strcmp(ins, "endm")) {
+            defining_macro = false;
+            macro_lib_count++;
+            continue;
+        }
+        if (defining_macro) {
+            strcpy(macro_lib[macro_lib_count].lines[macro_lib[macro_lib_count].line_count++], line);
+            continue;
+        }
+
+        // 2. Stack Handling (for nested blocks)
+        if (stack_ptr >= 0) {
+            int current_id = peek_id();
+            substitute_args_with_id(line, "", "", "", "", current_id);
+        }
+
+        // 3. Process the Line (Handles Macros, Directives, Instructions)
+        process_line(line, write_mode);
+    }
+}
+
+void process_line(char *line, bool write_mode) {
     char work[MAX_LINE_LEN]; 
     strcpy(work, line); 
+
+    // 1. Handle Context/Scope (%u Substitution)
+    // If we are inside a scoped block (like a loop macro), substitute %u first.
+    if (stack_ptr >= 0) {
+        int current_id = peek_id();
+        substitute_args_with_id(work, "", "", "", "", current_id);
+    }
+
     simplify_punct(work);
     
+    // 2. Skip Empty/Comments
     if (work[0] == '\0' || work[0] == ';' || work[0] == '#') return;
 
     char ins[64], a1[128], a2[128], a3[128], a4[128];
     if (!split_line(work, ins, a1, a2, a3, a4)) return;
 
+    // ==================================================
+    // 3. RECURSIVE MACRO EXPANSION
+    // ==================================================
+    int m_idx = find_macro(ins);
+    if (m_idx != -1) {
+        int current_id;
+        
+        // Handle Block Logic (endfor / endloop)
+        if (strncmp(ins, "end", 3) == 0) {
+            current_id = pop_id(ins + 3); // e.g. "endloop" -> pops "loop"
+        } else {
+            // New Block Start
+            current_id = ++unique_id_counter;
+            char end_search[128];
+snprintf(end_search, sizeof(end_search), "end%s", ins);
+            // If there is a matching "endX" macro, push scope
+            if (find_macro(end_search) != -1) push_id(current_id, ins);
+        }
+
+        // Expand and Recurse
+        for (int i = 0; i < macro_lib[m_idx].line_count; i++) {
+            char expanded[MAX_LINE_LEN];
+            strcpy(expanded, macro_lib[m_idx].lines[i]);
+            
+            // Substitute Arguments (%1..%4) and Unique ID (%u)
+            substitute_args_with_id(expanded, a1, a2, a3, a4, current_id);
+            
+            // CRITICAL: Call process_line recursively!
+            // This allows the expanded lines to contain other macros or pseudo-ops.
+            process_line(expanded, write_mode); 
+        }
+        return; // Line is fully handled by expansion
+    }
+
+    // ==================================================
+    // 4. LABELS, VARIABLES, DIRECTIVES
+    // ==================================================
     uint32_t current_offset = as_state.size;
 
+    // Handle Labels (ending in :)
     if (ins[strlen(ins)-1] == ':') {
         ins[strlen(ins)-1] = '\0';
         
         if (!write_mode) {
             add_symbol(ins, current_offset);
         } else {
-            if (ins[0] != '.') {
-                 strncpy(current_parent, ins, 63);
-            }
+            // Update parent context for local labels
+            if (ins[0] != '.') strncpy(current_parent, ins, 63);
         }
         
+        // If label is on same line as code (label: instruction), shift args
         if (strlen(a1) == 0) return;
         strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
     }
 
+    // Handle Variables (=)
     if (strcmp(a1, "=") == 0) {
         char *eq_pos = strchr(work, '='); 
         if (eq_pos) {
@@ -638,21 +740,29 @@ void process_instruction(char *line, bool write_mode) {
         return; 
     }
  
+    // Handle Directives (.)
     if (ins[0] == '.') {
-        char *args_ptr = strstr(line, ins) + strlen(ins);
+        // Re-locate arguments in the original string to preserve quotes/spaces
+        char *args_ptr = strstr(line, ins);
+        if (args_ptr) args_ptr += strlen(ins);
+        else args_ptr = "";
+        
         handle_directive(ins, args_ptr, write_mode);
         return; 
     }
 
     if (as_state.current_section == SECTION_DATA) return;
 
+    // ==================================================
+    // 5. INSTRUCTION ENCODING
+    // ==================================================
     int v1 = 0, v2 = 0, v3 = 0;
 
+    // --- Pseudo-Op: LA ---
     if (!strcmp(ins, "la")) {
-
         int rd = eval_math(a1, current_offset, false);
         if (write_mode) {
-            int addr = eval_math(a2, current_offset, false); // Use math_buf
+            int addr = eval_math(a2, current_offset, false);
             uint32_t lower = addr & 0xFFF;
             uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
@@ -663,33 +773,24 @@ void process_instruction(char *line, bool write_mode) {
         as_state.size += 8;
         return; 
     }
-else if (!strcmp(ins, "call")) {
-        // Usage: call <label>
-        // Logic: Calculates PC-relative offset and splits into AUIPC + JALR
-        
+    // --- Pseudo-Op: CALL ---
+    else if (!strcmp(ins, "call")) {
         int offset = eval_math(a1, current_offset, true);
-
         if (write_mode) {
             uint32_t lower = offset & 0xFFF;
             uint32_t upper = (uint32_t)offset >> 12;
+            if (lower & 0x800) upper += 1;
 
-            if (lower & 0x800) {
-                upper += 1;
-            }
-
-            uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12);
-
+            uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12); // ra = 1
             uint32_t bin_jalr = encode_I_type(0x67, 0x0, lower, 1, 1);
-
             memcpy(&as_state.image[as_state.size], &bin_auipc, 4);
             memcpy(&as_state.image[as_state.size + 4], &bin_jalr, 4);
         }
         as_state.size += 8; 
         return; 
     }
+    // --- Pseudo-Op: LI ---
     else if (!strcmp(ins, "li")) {
-        // Recombine potentially split arguments (e.g. "1 + 2")
-
         int rd = eval_math(a1, current_offset, false);
         int val = eval_math(a2, current_offset, false); 
         
@@ -710,31 +811,23 @@ else if (!strcmp(ins, "call")) {
             }
             as_state.size += 4;
         }
-        return; // Return early
+        return;
     } 
-
+    // --- Memory Instructions: 0(sp) ---
     else if (strchr(a2, '(') && strchr(a2, ')')) {
-        // Syntax: inst reg, offset(base)
-        // Example: sw t0, 0(sp)
-        // a1 = "t0", a2 = "0(sp)"
-
         v1 = eval_math(a1, current_offset, false); 
-
         char *paren = strchr(a2, '(');
         *paren = '\0'; 
-        
         char *reg_end = strchr(paren + 1, ')');
         if (reg_end) *reg_end = '\0'; 
 
-        
-        int base = eval_math(paren + 1, current_offset, false); // "sp" -> 2
-        int offset = eval_math(a2, current_offset, false);      // "0" -> 0
+        int base = eval_math(paren + 1, current_offset, false);
+        int offset = eval_math(a2, current_offset, false);
 
         v2 = offset;
         v3 = base;
         
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
-        
         if (bin != 0) {
             if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4);
             as_state.size += 4;
@@ -743,7 +836,7 @@ else if (!strcmp(ins, "call")) {
         }
         return;
     }
-
+    // --- Standard Instructions ---
     else {
         if (!strcmp(ins, "j")) {
             v2 = eval_math(a1, current_offset, true); 
@@ -765,104 +858,20 @@ else if (!strcmp(ins, "call")) {
             v1 = eval_math(a1, current_offset, false);
             v2 = eval_math(a2, current_offset, false);
             v3 = eval_math(a3, current_offset, false);
-        }        // --- ENCODE & CHECK FOR ERROR ---
+        }
+
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
 
         if (bin != 0) {
-            if (write_mode) {
-                memcpy(&as_state.image[as_state.size], &bin, 4);
-            }
+            if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4);
             as_state.size += 4;
         } 
         else {
-            
             panic("Unknown instruction or syntax error: '%s'", ins);
         }
     }   
 }
 
-void process_pass(FILE *fp, bool write_mode, const char* filename) {
-    // --- CONTEXT SET ---
-    current_pass = write_mode ? 2 : 1;
-    current_file = filename;
-    current_line = 0; 
-    // -------------------
-
-    char line[MAX_LINE_LEN];
-    rewind(fp);
-
-    unique_id_counter = 0;
-    stack_ptr = -1;
-    defining_macro = false;
-
-    while (fgets(line, sizeof(line), fp)) {
-        current_line++;
-        line[strcspn(line, "\r\n")] = '\0';
-        
-        char work[MAX_LINE_LEN];
-        strcpy(work, line);
-        simplify_punct(work);
-        
-        
-        if (work[0] == '\0' || work[0] == ';' || work[0] == '#') continue;
-
-        char ins[32], a1[32], a2[32], a3[32], a4[32];
-        if (!split_line(work, ins, a1, a2, a3, a4)) continue;
-        
-       
-        if (!strcmp(ins, "macro")) {
-            defining_macro = true;
-            strcpy(macro_lib[macro_lib_count].name, a1);
-            macro_lib[macro_lib_count].line_count = 0;
-            continue;
-        }
-        if (!strcmp(ins, "endm")) {
-            defining_macro = false;
-            macro_lib_count++;
-            continue;
-        }
-        if (defining_macro) {
-            strcpy(macro_lib[macro_lib_count].lines[macro_lib[macro_lib_count].line_count++], line);
-            continue;
-        }
-
-      
-        int m_idx = find_macro(ins);
-        if (m_idx != -1) {
-            int current_id;
-            if (strncmp(ins, "end", 3) == 0) {
-                current_id = pop_id(ins + 3);
-            } else {
-                current_id = ++unique_id_counter;
-                char end_search[64];
-                snprintf(end_search, 64, "end%s", ins);
-                if (find_macro(end_search) != -1) push_id(current_id, ins);
-            }
-
-            for (int i = 0; i < macro_lib[m_idx].line_count; i++) {
-                char expanded[MAX_LINE_LEN];
-                strcpy(expanded, macro_lib[m_idx].lines[i]);
-                substitute_args_with_id(expanded, a1, a2, a3, a4, current_id);
-                process_instruction(expanded, write_mode); 
-            }
-            continue;
-        }
-        
-     
-        if (ins[0] == '.' && ins[strlen(ins)-1] != ':') {
-            char *args_ptr = strstr(work, ins) + strlen(ins);
-            handle_directive(ins, args_ptr, write_mode);
-            continue; 
-        }
-
-    
-        if (stack_ptr >= 0) {
-            int current_id = peek_id();
-            substitute_args_with_id(line, "", "", "", "", current_id);
-        }
-        process_instruction(line, write_mode);
-    }
-}
 
 void save_binary(const char* filename) {
     FILE *f = fopen(filename, "wb");
