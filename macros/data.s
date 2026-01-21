@@ -9,17 +9,11 @@ macro init_uart
 endm
 ; Usage: MAX dest, val_a, val_b
 macro max %1, %2, %3
-    ; Check if val_a (%2) < val_b (%3)
     blt %2, %3, .pick_b_%u
-    
-    ; Case A: val_a is larger (or equal)
     mv %1, %2
     j .done_%u
-
-    ; Case B: val_b is larger
     .pick_b_%u:
     mv %1, %3
-
     .done_%u:
 endm
 
@@ -61,18 +55,16 @@ macro print_int_imm %1
     sw t2, 8(sp)
     sw t3, 12(sp)
 
-    li t0, %1           # <--- DIFFERENCE: Uses LI
+    li t0, %1           
     li t1, 10
     li t3, 0
 
-    # Handle Zero
     bnez t0, .imm_neg_%u
     li t2, 48
     sb t2, 0(s1)
     j .imm_done_%u
 
 .imm_neg_%u:
-    # Handle Negative
     bge t0, zero, .imm_extract_%u
     li t2, 45
     sb t2, 0(s1)
@@ -81,7 +73,7 @@ macro print_int_imm %1
 .imm_extract_%u:
     beqz t0, .imm_print_%u
     remu t2, t0, t1
-    divu t0, t0, t1     # <--- FIXED: t1 not t
+    divu t0, t0, t1     
     addi t2, t2, 48
     addi sp, sp, -4
     sw t2, 0(sp)
@@ -113,18 +105,18 @@ macro print_int_reg %1
     sw t2, 8(sp)
     sw t3, 12(sp)
 
-    mv t0, %1           # <--- DIFFERENCE: Uses MV
+    mv t0, %1          
     li t1, 10
     li t3, 0
 
-    # Handle Zero
+   
     bnez t0, .reg_neg_%u
     li t2, 48
     sb t2, 0(s1)
     j .reg_done_%u
 
 .reg_neg_%u:
-    # Handle Negative
+  
     bge t0, zero, .reg_extract_%u
     li t2, 45
     sb t2, 0(s1)
@@ -133,7 +125,7 @@ macro print_int_reg %1
 .reg_extract_%u:
     beqz t0, .reg_print_%u
     remu t2, t0, t1
-    divu t0, t0, t1     # <--- FIXED: t1 not t
+    divu t0, t0, t1 
     addi t2, t2, 48
     addi sp, sp, -4
     sw t2, 0(sp)
@@ -161,26 +153,26 @@ macro print_hex_reg %1
     sw t0, 0(sp)
     sw t1, 4(sp)
     
-    mv t0, %1           # Value to print
-    li t1, 28           # Shift amount (start with top nibble)
+    mv t0, %1          
+    li t1, 28         
 
 .hex_loop_%u:
-    srl t2, t0, t1      # Shift right to get the nibble to position 0
-    andi t2, t2, 0xF    # Mask out everything except the last 4 bits
+    srl t2, t0, t1   
+    andi t2, t2, 0xF
     
     li t3, 10
     blt t2, t3, .is_digit_%u
     
-    addi t2, t2, 55     # Convert 10-15 to 'A'-'F' (65-70)
+    addi t2, t2, 55
     j .print_char_%u
 
 .is_digit_%u:
-    addi t2, t2, 48     # Convert 0-9 to '0'-'9' (48-57)
+    addi t2, t2, 48    
 
 .print_char_%u:
-    sb t2, 0(s1)        # Print to UART
+    sb t2, 0(s1)      
     
-    addi t1, t1, -4     # Decrease shift by 4 bits
+    addi t1, t1, -4  
     bge t1, zero, .hex_loop_%u
 
     lw t1, 4(sp)
@@ -193,26 +185,26 @@ macro print_hex_imm %1
     sw t0, 0(sp)
     sw t1, 4(sp)
     
-    li t0, %1           # Value to print
-    li t1, 28           # Shift amount (start with top nibble)
+    li t0, %1          
+    li t1, 28         
 
 .hex_loop_%u:
-    srl t2, t0, t1      # Shift right to get the nibble to position 0
-    andi t2, t2, 0xF    # Mask out everything except the last 4 bits
+    srl t2, t0, t1   
+    andi t2, t2, 0xF 
     
     li t3, 10
     blt t2, t3, .is_digit_%u
     
-    addi t2, t2, 55     # Convert 10-15 to 'A'-'F' (65-70)
+    addi t2, t2, 55 
     j .print_char_%u
 
 .is_digit_%u:
-    addi t2, t2, 48     # Convert 0-9 to '0'-'9' (48-57)
+    addi t2, t2, 48  
 
 .print_char_%u:
-    sb t2, 0(s1)        # Print to UART
+    sb t2, 0(s1)    
     
-    addi t1, t1, -4     # Decrease shift by 4 bits
+    addi t1, t1, -4
     bge t1, zero, .hex_loop_%u
 
     lw t1, 4(sp)
@@ -253,7 +245,36 @@ macro endfor %1, %2, %3
         addi sp, sp, 8
 endm
 
+macro for_range %1, %2, %3
+    addi sp, sp, -8
+    sw t0, 0(sp)
+    sw t1, 4(sp)
+    
+    la t0, %1  
+    li t1, %2
+    sw t1, 0(t0)
+    .loop_%u:
+        la t1, %1
+        lw t0, 0(t1)
+        li t2, %3
+        
+        beq t0, t2, .end_%u
+endm
 
+macro endfor_range %1
+
+    la t1, %1
+    lw t0, 0(t1)
+    addi t0, t0, 1
+    sw t0, 0(t1)
+    
+    j .loop_%u
+    
+    .end_%u:
+        lw t1, 4(sp)
+        lw t0, 0(sp)
+        addi sp, sp, 8
+endm
 
 .data
 .align 4
