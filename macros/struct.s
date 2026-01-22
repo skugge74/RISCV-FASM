@@ -2,20 +2,17 @@
 ; STRUCT DEFINITION MACROS
 ; ==========================================================
 
-; 1. Start a new structure
 ; Usage: struct Monster
 macro struct %1
     STRUCT_PTR = 0           ; Reset the global offset counter
 endm
 
-; 2. Define a field
 ; Usage: field Name, Size
 macro field %1, %2
     %1 = STRUCT_PTR          ; Define the Offset Constant (e.g., M_HP = 4)
     STRUCT_PTR = STRUCT_PTR + %2 ; Increment the pointer
 endm
 
-; 3. End the structure
 ; Usage: endstruct Monster
 macro endstruct %1
     %1_SIZE = STRUCT_PTR     ; Save the total size (e.g., Monster_SIZE = 12)

@@ -455,7 +455,13 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "bgeu")) return encode_B_type(0x63, 0x7, a1, a2, a3);
     if (!strcmp(name, "beqz")) return encode_B_type(0x63, 0x0, a1, 0, a3);
     if (!strcmp(name, "bnez")) return encode_B_type(0x63, 0x1, a1, 0, a3);
-
+    if (!strcmp(name, "bgt"))  return encode_B_type(0x63, 0x4, a2, a1, a3); 
+    if (!strcmp(name, "bgtz")) return encode_B_type(0x63, 0x4, 0, a1, a3);
+    if (!strcmp(name, "blez")) return encode_B_type(0x63, 0x5, 0, a1, a3);
+    if (!strcmp(name, "ble"))  return encode_B_type(0x63, 0x5, a2, a1, a3); 
+    if (!strcmp(name, "bgtu")) return encode_B_type(0x63, 0x6, a2, a1, a3);
+    if (!strcmp(name, "bleu")) return encode_B_type(0x63, 0x7, a2, a1, a3);
+    
     if (!strcmp(name, "jal"))   return encode_J_type(0x6F, a1, a2);
     if (!strcmp(name, "jalr"))  return encode_I_type(0x67, 0x0, a3, a2, a1);
     if (!strcmp(name, "lui"))   return encode_U_type(0x37, a1, a2);

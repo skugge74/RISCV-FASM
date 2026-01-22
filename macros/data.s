@@ -287,7 +287,32 @@ macro endif
     .if_end_%u:
 endm
 
+; ==========================================================
+; WHILE LOOP
+; Usage: while condition, reg1, reg2
+; Example: while lt, t0, t1  (While t0 < t1)
+; ==========================================================
+macro while %1 %2 %3
+    .while_start_%u:
+        ; Check condition. If True, go to body.
+        b%1 %2, %3, .while_body_%u
+        
+        ; If False, skip to the end (Exit Loop)
+        j .while_end_%u
+        
+    .while_body_%u:
+endm
 
+; ==========================================================
+; END WHILE
+; Usage: endwhile
+; ==========================================================
+macro endwhile
+    ; Jump back to the start to check condition again
+    j .while_start_%u
+    
+    .while_end_%u:
+endm
 
 .data
 .align 4
