@@ -276,6 +276,19 @@ macro endfor_range %1
         addi sp, sp, 8
 endm
 
+; Usage: if condition, reg1, reg2
+macro if %1 %2 %3
+    b%1 %2, %3, .if_body_%u
+    j .if_end_%u
+    .if_body_%u:
+endm
+
+macro endif
+    .if_end_%u:
+endm
+
+
+
 .data
 .align 4
 ln: .asciz "\n" 
