@@ -1,52 +1,71 @@
 .org 0x80000000
     j _start
 
-.include "macros/data.s"   ; Your print macros
-.include "macros/struct.s"        ; Your struct/array macros
-.include "macros/array.s"        ; Your struct/array macros
+.include "macros/data.s"
+.include "macros/struct.s"
+.include "macros/array.s"
 
-; ==========================================
-; STRUCT DEFINITION
-; ==========================================
 struct Packet
-    field P_ID,    4     ; Offset 0
-    array P_DATA,  10    ; Offset 4  (Reserves 10 bytes: 4 to 13)
-    field P_CRC,   4     ; Offset 14 (4 + 10)
-endstruct Packet         ; Total Size = 18 (14 + 4)
+    field P_ID,    4
+    array P_DATA,  10 
+    field P_CRC,   4
+endstruct Packet
 
-; ==========================================
-; CODE
-; ==========================================
 .text
 .align 4
 _start:
     init_uart
 
-    ; --- 1. Test Array Offset ---
-    ; P_DATA should be at offset 4
-    print_str msg_data
-    li t0, P_DATA
-    print_int_reg t0     ; Expected: 4
+    ; ==========================================
+    ; 1. WRITE LOOP (Fill Array)
+    ; ==========================================
+    print_str msg_write
+
+    ; for_range i, 0, 10
+    for_range i, 0, 10
+        
+        ; Load Index 'i' into t1
+        la t0, i
+        lw t1, 0(t0)
+        
+        ; Load Value to write (we will just use 'i' as the value)
+        mv t2, t1  
+        
+        ; COMMAND: P_DATA[t1] = t2
+        ; array_set_b Instance, Field, IndexReg, ValueReg
+        array_set_b player, P_DATA, t1, t2
+        
+    endfor_range i
+    
     print_str ln
 
-    ; --- 2. Test Field After Array ---
-    ; P_CRC should be at offset 14 (4 + 10)
-    print_str msg_crc
-    li t1, P_CRC
-    print_int_reg t1     ; Expected: 14
-    print_str ln
+    ; ==========================================
+    ; 2. READ LOOP (Print Array)
+    ; ==========================================
+    print_str msg_read
 
-    ; --- 3. Test Total Size ---
-    ; Packet_SIZE should be 18 (14 + 4)
-    print_str msg_size
-    li t2, Packet_SIZE
-    print_int_reg t2     ; Expected: 18
-    print_str ln
+    for_range i, 0, 10
+        
+        ; Load Index 'i' into t1
+        la t0, i
+        lw t1, 0(t0)
+        
+        ; COMMAND: t2 = P_DATA[t1]
+        ; array_get_b Instance, Field, IndexReg, DestReg
+        array_get_b player, P_DATA, t1, t2
+        
+        print_int_reg t2
+        print_str space
+        
+    endfor_range i
 
+    print_str ln
     halt
 
 .data
-ln:       .asciz "\n"
-msg_data: .asciz "Array Offset (Expect 4): "
-msg_crc:  .asciz "CRC Offset   (Expect 14): "
-msg_size: .asciz "Total Size   (Expect 18): "
+ln:        .asciz "\n"
+space:     .asciz " "
+msg_write: .asciz "Writing 0..9 to array...\n"
+msg_read:  .asciz "Reading back: "
+i:         .word 0
+player:    .space Packet_SIZE
