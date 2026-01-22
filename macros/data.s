@@ -222,28 +222,7 @@ macro get_char %1
 endm
 
 
-macro for %1, %2, %3
-    addi sp, sp, -8
-    sw t0, 0(sp)
-    sw t1, 4(sp)
-    %2:
-        la t1, %1
-        lw t0, 0(t1)
-        li t2, 10
-        beq t0, t2, %3
-endm
 
-macro endfor %1, %2, %3
-    la t1, %1
-    lw t0, 0(t1)
-    addi t0, t0, 1
-    sw t0, 0(t1)
-    j %2
-    %3:
-        lw t1, 4(sp)
-        lw t0, 0(sp)
-        addi sp, sp, 8
-endm
 
 macro for_range %1, %2, %3
     addi sp, sp, -8
