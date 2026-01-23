@@ -5,7 +5,7 @@ macro array %1, %2
     STRUCT_PTR = STRUCT_PTR + %2 ; Skip 'Size' bytes forward
 endm
 
-macro endstruct %1
+macro endarray %1
     %1_SIZE = STRUCT_PTR
 endm
 

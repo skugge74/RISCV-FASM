@@ -1,5 +1,5 @@
 # --- Toolchain ---
-TARGET    := riscv-assembler
+TARGET    := riscv-fasm
 BUILD_DIR := ./build
 SRC_DIR   := ./src
 INC_DIR   := ./include

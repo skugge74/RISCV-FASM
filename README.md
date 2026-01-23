@@ -1,46 +1,46 @@
 # Kdex RISC-V High-Level Assembler
 
 A robust, custom-built Assembler for RISC-V.
-This project bridges the gap between raw assembly and high-level logic,allowing you to write complex loops and conditionals using a powerful Stack-Based Macro System while retaining bit-perfect control over the hardware.
+This project bridges the gap between raw assembly and high-level logic,allowing you to write complex loops and use complex data structures using a powerful Stack-Based Macro System while retaining bit-perfect control over the hardware.
 
 It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-metal execution on RISC-V processors or emulators (QEMU).
 ## FEATURES
 
-1) High-Level Macro System
-- Nested Logic: Supports infinite nesting of macros (e.g., loops inside loops) using an internal stack.
-- Scoped Labels: Automatically handles unique label generation (e.g., `.loop_%u`) to prevent naming collisions in recursive calls.
-- Arguments: Pass registers or immediates using `%1`, `%2`, etc.
+1) **High-Level Macro System**
+    - Nested Logic: Supports infinite nesting of macros (e.g., loops inside loops) using an internal stack.
+    - Scoped Labels: Automatically handles unique label generation (e.g., `.loop_%u`) to prevent naming collisions in recursive calls.
+    - Arguments: paramater handling using `%1`, `%2`, etc.
 
-2) Recursive Math Engine
-- Expression Parsing: Supports complex arithmetic natively. `li t0, 10 + 5 * 2 << 3` Evaluates to `160`.
-- Location Counters: 
-    - `$`: Current Address (Dynamic, moves with every instruction).
-    - `$$`: Section Origin (Static).
-3) Stateful Preprocessor & Data Modeling
-- Mutable Variables: Introduces compile-time variables (`=`) that can be reassigned (e.g., `OFFSET = OFFSET + 4`), enabling dynamic calculation of constants during assembly.
+2) **Recursive Math Engine**
+    - Expression Parsing: Supports complex arithmetic natively. `li t0, 10 + 5 * 2 << 3` Evaluates to ` t0 <- 160`.
+    - Location Counters: 
+        - `$`: Current Address (Dynamic, moves with every instruction).
+        - `$$`: Section Origin (Static).
+3) **Stateful Preprocessor & Data Modeling**
+    - Mutable Variables: Introduces compile-time variables (`=`) that can be reassigned (e.g., `OFFSET = OFFSET + 4`), enabling dynamic calculation of constants during assembly.
 
-- C-Style Structs: Native support for defining complex data structures (`struct`, `field`, `endstruct`) with automatic offset management.
+    - C-Style Structs: Native support for defining complex data structures (`struct`, `field`, `endstruct`) with automatic offset management.
 
-- Memory Layout Engine: Automatically calculates total object sizes (`Struct_SIZE`) and handles array reservations (`array buffer, 128`), eliminating manual offset math.
+    - Memory Layout Engine: Automatically calculates total object sizes (`Struct_SIZE`) and handles array reservations (`array buffer, 128`), eliminating manual offset math.
 
-- Zero-Overhead Abstraction: All calculations happen at compile time, resolving to hardcoded constants in the binary with no runtime performance penalty. 
+    - Zero-Overhead Abstraction: All calculations happen at compile time, resolving to hardcoded constants in the binary with no runtime performance penalty. 
 
-4) Other things
-- Relative Logic: Calculates branch offsets automatically (beq x0, x0, $+8).
-- CSR Support: Full support for Control Status Registers (csrr, csrw) for OS development.
-- Smart Pseudo-Ops: Automatically expands li into lui + addi for large numbers (> 12 bits).
-- Multiple Inclusion: manage large projects with `.include "file.s"`.
-- #TODO: Recursive Inclusion
-- Scoped Symbol Table
-    - Handles Global Labels (main:, _start:) and Local Labels (.loop:) separately.
-    - Prevents collisions by attaching local labels to their parent context.
+4) **Other things**
+    - CSR Support: Full support for Control Status Registers (csrr, csrw) for OS development.
+    - Multiple Inclusion: manage large projects with `.include "file.s"`.
+    - #TODO: Recursive Inclusion
  
 ## BUILD
+**REQUIREMENTS:**
+- riscv64-linux-gnu-objdump
+- qemu-system-riscv32
+- make 
+
 | Command                | Description |
 | --------------         | --------------- |
-| `make`                 | Builds the `riscv-assembler` executable | 
+| `make`                 | Builds the `riscv-fasm` executable | 
 | `make run FILE=test.s` | Assembles and runs in `QUEMU` a specific assembly file. |
-| `make dump FILE=test.s`| Dumps the symbol table and binary layout for debugging. |
+| `make dump FILE=test.s`| Dumps the symbol table and binary layout for debugging using `riscv64-linux-gnu-objdump`. |
 
 ## Macro Language
 This assembler treats macros as high-level constructs. You can define custom control structures that compile down to optimized assembly.
@@ -115,26 +115,55 @@ OFFSET = OFFSET + MAX_VAL ; OFFSET <- 25 (5+20)
 li t1, OFFSET             ; t1 <- 25
 ```
 
-### struct macro definition 
+### struct & array macro definition 
 ```assembly
-; Initialize a new structure
+; Usage: struct Packet
 macro struct %1
-    STRUCT_PTR = 0           ; Reset the global counter
+    STRUCT_PTR = 0           ; Reset the global offset counter
 endm
 
-; Define a field
 ; Usage: field Name, Size
 macro field %1, %2
-    %1 = STRUCT_PTR          ; Define the Constant (e.g. M_HP = 4)
-    STRUCT_PTR = STRUCT_PTR + %2 ; Update the Variable (4 + 4 = 8)
+    %1 = STRUCT_PTR          ; Define the Offset Constant (e.g., M_CRC = 4)
+    STRUCT_PTR = STRUCT_PTR + %2 ; Increment the pointer
 endm
 
-; Finalize the structure
+; Usage: endstruct Packet
 macro endstruct %1
-    %1_SIZE = STRUCT_PTR     ; Save the final total size
+    %1_SIZE = STRUCT_PTR     ; Save the total size (e.g., Packet_SIZE = 12)
 endm
+
+
+macro struct_set %1, %2, %3, %4
+    la t0, %1           ; Load Base Address of Instance 
+    li t1, %3           ; Load Immediate Value into Temp
+    s%4 t1, %2(t0)      ; Store: s[Type] val, Offset(base)
+endm
+
+macro struct_get %1, %2, %3, %4
+    la t0, %1           ; Load Base Address of Instance
+    l%4 %3, %2(t0)      ; Load: l[Type] dest, Offset(base)
+
+macro array %1, %2
+    %1 = STRUCT_PTR              ; Define the start of the array
+    STRUCT_PTR = STRUCT_PTR + %2 ; Skip 'Size' bytes forward
+endm
+
+macro array_get_b %1, %2, %3, %4
+    la t6, %1           ;  Load Base Address into t6 (Safe Temp)
+    add t6, t6, %3      ;  Add the Index (Base + Index)
+    lb %4, %2(t6)       ;  Load Byte from (Base+Index) + Offset
+endm
+
+ macro array_set_b %1, %2, %3, %4
+    la t6, %1           ;  Load Base Address into t6
+    add t6, t6, %3      ;  Add the Index
+    sb %4, %2(t6)       ;  Store Byte at (Base+Index) + Offset
+endm
+
 ```
-### struct Usage example
+
+### struct & array Usage example
 ```assembly
 struct Packet
     field ID, 4         ; ID = 0
@@ -144,8 +173,33 @@ endstruct Packet        ; Packet_SIZE = 136
 
 
 _start:
-    li t0, Packet_SIZE  ; Loads 136
-    li t1, CRC          ; Loads 132
+    struct_set my_packet, ID,  1,   b   
+    struct_set my_packet, CRC, 999, w
+    for_range i, 0, 128
+        
+        ; Load Index 'i' into t1
+        la t0, i
+        lw t1, 0(t0)
+        
+        ; Load Value to write (i) 
+        mv t2, t1  
+        
+        ; COMMAND: P_DATA[t1] = t2
+        ; array_set_b Instance, Field, IndexReg, ValueReg
+        array_set_b player, P_DATA, t1, t2
+        
+    endfor_range i
+    
+    struct_get my_packet, CRC, t0, w    
+    
+    li t1, 10
+    ; COMMAND: t2 = P_DATA[10]
+    array_get_b my_packet, DATA, t1, t2
+    
+    print_int_reg t0    ; Prints 999
+    print_str ln
+.data:
+my_packet: .space Packet_SIZE  ; Allocate 136 bytes 
 ```
 
 ## Directives & Math
