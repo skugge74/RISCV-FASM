@@ -1,8 +1,9 @@
 .org 0x80000000
 j _start
 
-.include "./included.s"
-.include "../macros/data.s"     
+.include "tests/./included.s"
+.include "./macros/data.s"     
+.include "./macros/cond_loop.s"     
 
 .text
 .align 4

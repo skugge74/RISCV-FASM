@@ -2,6 +2,7 @@
 j _start
 
 .include "./macros/data.s"
+.include "./macros/cond_loop.s"
 
 
 .text

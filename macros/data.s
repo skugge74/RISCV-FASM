@@ -1,13 +1,20 @@
+# --- Halt system (e.g. halt) ---
 macro halt
   .halt_%u:
     j .halt_%u
 endm
 
+# --- Initialize Uart (e.g. init_uart) ---
 macro init_uart
     li sp, 0x80100000
     li s1, 0x10000000
 endm
-; Usage: MAX dest, val_a, val_b
+
+; ==========================================================
+; MAXIMUM of 2 registers
+; Usage: max dst, src1, src2
+; Example: max t2, t0, t1  (t2 <- (t0 > t1) ? t0 : t1))
+; ==========================================================
 macro max %1, %2, %3
     blt %2, %3, .pick_b_%u
     mv %1, %2
@@ -15,24 +22,6 @@ macro max %1, %2, %3
     .pick_b_%u:
     mv %1, %3
     .done_%u:
-endm
-
-macro repeat %1
-    addi sp, sp, -4
-    li   t0, %1
-    sw   t0, 0(sp)
-    .rep_start_%u:
-        lw   t0, 0(sp)
-        beqz t0, .rep_exit_%u
-endm
-
-macro endrepeat
-        lw   t0, 0(sp)
-        addi t0, t0, -1
-        sw   t0, 0(sp)
-        j .rep_start_%u
-    .rep_exit_%u:
-        addi sp, sp, 4
 endm
 
 macro print_str %1
@@ -222,76 +211,78 @@ macro get_char %1
 endm
 
 
+; ==========================================================
+; GET STRING
+; Usage: get_string buffer_addr, max_length
+; Reads characters until 'Enter' (Newline) is pressed.
+; ==========================================================
+macro get_string %1, %2
+    li t3, 0             ; t3 = Counter (i)
+    la t4, %1            ; t4 = Buffer Pointer
+    li t5, %2            ; t5 = Max Length
 
-
-macro for_range %1, %2, %3
-    addi sp, sp, -8
-    sw t0, 0(sp)
-    sw t1, 4(sp)
-    
-    la t0, %1  
-    li t1, %2
-    sw t1, 0(t0)
     .loop_%u:
-        la t1, %1
-        lw t0, 0(t1)
-        li t2, %3
+        ; Get one character
+        get_char t0      
         
-        beq t0, t2, .end_%u
-endm
-
-macro endfor_range %1
-
-    la t1, %1
-    lw t0, 0(t1)
-    addi t0, t0, 1
-    sw t0, 0(t1)
-    
-    j .loop_%u
-    
-    .end_%u:
-        lw t1, 4(sp)
-        lw t0, 0(sp)
-        addi sp, sp, 8
-endm
-
-; Usage: if condition, reg1, reg2
-macro if %1 %2 %3
-    b%1 %2, %3, .if_body_%u
-    j .if_end_%u
-    .if_body_%u:
-endm
-
-macro endif
-    .if_end_%u:
-endm
-
-; ==========================================================
-; WHILE LOOP
-; Usage: while condition, reg1, reg2
-; Example: while lt, t0, t1  (While t0 < t1)
-; ==========================================================
-macro while %1 %2 %3
-    .while_start_%u:
-        ; Check condition. If True, go to body.
-        b%1 %2, %3, .while_body_%u
+        ; Check for Newline (Enter key = 10 '\n' or 13 '\r')
+        li t1, 10
+        beq t0, t1, .done_%u
+        li t1, 13
+        beq t0, t1, .done_%u
         
-        ; If False, skip to the end (Exit Loop)
-        j .while_end_%u
+        ; Echo char back to screen (so user sees what they type!)
+        sb t0, 0(s1)     ; s1 is UART Base from init_uart
         
-    .while_body_%u:
+        ; Store in buffer: buffer[i] = char
+        add t2, t4, t3   ; Address = Base + i
+        sb t0, 0(t2)
+        
+        addi t3, t3, 1   ; i++
+        
+        ; Safety: Don't overflow buffer
+        blt t3, t5, .loop_%u
+
+    .done_%u:
+        ; Null-terminate the string (important for strcmp!)
+        add t2, t4, t3
+        sb zero, 0(t2)
+        
+        ; Print a newline so the shell reply is on the next line
+        li t1, 10
+        sb t1, 0(s1)
 endm
 
 ; ==========================================================
-; END WHILE
-; Usage: endwhile
+; STRING COMPARE (strcmp)
+; Usage: strcmp str1_addr, str2_addr, result_reg
 ; ==========================================================
-macro endwhile
-    ; Jump back to the start to check condition again
-    j .while_start_%u
+macro strcmp %1, %2, %3
+    la t0, %1           ; Ptr 1
+    la t1, %2           ; Ptr 2
     
-    .while_end_%u:
+    .loop_%u:
+        lb t2, 0(t0)    ; Load char from Str1
+        lb t3, 0(t1)    ; Load char from Str2
+        
+        ; If chars are different, stop -> Return 1
+        bne t2, t3, .diff_%u
+        
+        ; If we hit NULL (0) and they were equal, we are done -> Return 0
+        beqz t2, .same_%u
+        
+        addi t0, t0, 1
+        addi t1, t1, 1
+        j .loop_%u
+
+    .diff_%u:
+        li %3, 1        ; Result = 1 (Different)
+        j .done_%u
+    .same_%u:
+        li %3, 0        ; Result = 0 (Same)
+    .done_%u:
 endm
+
 
 .data
 .align 4

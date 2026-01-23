@@ -1,7 +1,7 @@
 .org 0x80000000
 j _start
 
-.include "./data.s" 
+.include "./macros/data.s" 
 
 .text
 _start:

@@ -1,7 +1,7 @@
 .org 0x80000000
 j _start
 
-.include "./macros/data.s"   ; For print_hex_reg/halt if you have them, otherwise see below
+.include "./macros/data.s"  
 
 ; ==========================================================
 ; MACRO: SUM_6

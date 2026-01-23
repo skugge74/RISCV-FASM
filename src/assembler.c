@@ -522,23 +522,30 @@ void handle_directive(char *directive, char *args, bool write_mode) {
             panic("Include file not found: %s", filename);
         }
     }
-    else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
+        else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
         // Usage: .equ NAME, VALUE
         char name[64];
         
-        // 1. Parse the name (first token)
+        // 1. Skip leading whitespace
         char *ptr = args;
         while (isspace((unsigned char)*ptr)) ptr++;
         
+        // 2. Parse the name
+        // FIX: Stop at space OR comma
         int i = 0;
-        while (*ptr && !isspace((unsigned char)*ptr) && i < 63) {
+        while (*ptr && !isspace((unsigned char)*ptr) && *ptr != ',' && i < 63) {
             name[i++] = *ptr++;
         }
         name[i] = '\0';
 
-        // 2. The rest of the string is the value expression
-        // eval_math handles the spaces/math internally
-        if (i > 0) {
+        // 3. Skip separators (spaces and/or comma)
+        // FIX: Move ptr past the comma so eval_math sees clean numbers
+        while (*ptr && (isspace((unsigned char)*ptr) || *ptr == ',')) {
+            ptr++;
+        }
+
+        // 4. The rest is the value
+        if (i > 0 && *ptr) {
             int val = eval_math(ptr, as_state.size, false);
             add_or_update_variable(name, val);
         }
@@ -593,6 +600,36 @@ void handle_directive(char *directive, char *args, bool write_mode) {
             uint8_t val = (uint8_t)eval_math(expr, as_state.size, false);
             if (write_mode) as_state.image[as_state.size] = val;
             as_state.size += 1;
+            ptr = end;
+        }
+    }
+    else if (!strcmp(directive, ".half") || !strcmp(directive, ".short")) {
+        char *ptr = args;
+        while (*ptr) {
+            
+            while (*ptr && (isspace((unsigned char)*ptr) || *ptr == ',')) ptr++;
+            if (!*ptr) break;
+
+           
+            char *end = ptr;
+            while (*end && *end != ',' && !isspace((unsigned char)*end)) end++;
+
+          
+            char expr[128];
+            int len = end - ptr; 
+            if (len > 127) len = 127;
+            strncpy(expr, ptr, len); 
+            expr[len] = '\0';
+
+         
+            uint16_t val = (uint16_t)eval_math(expr, as_state.size, false);
+            
+            if (write_mode) {
+                as_state.image[as_state.size]     = val & 0xFF;        // Low Byte
+                as_state.image[as_state.size + 1] = (val >> 8) & 0xFF; // High Byte
+            }
+            
+            as_state.size += 2; // Step forward 2 bytes
             ptr = end;
         }
     }
@@ -692,7 +729,7 @@ void process_line(char *line, bool write_mode) {
             // New Block Start
             current_id = ++unique_id_counter;
             char end_search[128];
-snprintf(end_search, sizeof(end_search), "end%s", ins);
+            snprintf(end_search, sizeof(end_search), "end%s", ins);
             // If there is a matching "endX" macro, push scope
             if (find_macro(end_search) != -1) push_id(current_id, ins);
         }
