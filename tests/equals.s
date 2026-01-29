@@ -62,4 +62,4 @@ _start:
     print_int_reg t4
     print_str ln
  
-    halt
+    qemu_off

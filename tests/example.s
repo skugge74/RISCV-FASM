@@ -13,8 +13,7 @@ _start:
 repeat 10
   print_str msg    
 endrepeat
-halt
-
+qemu_off
 # --- 3. DATA SECTION ---
 .data
 .align 4

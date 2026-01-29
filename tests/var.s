@@ -27,7 +27,7 @@ _start:
     print_int_imm OFFSET
     print_str ln 
     
-    halt
+    qemu_off
 
 .data
 ln: .asciz "\n"

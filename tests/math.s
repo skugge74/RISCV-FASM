@@ -42,7 +42,7 @@ _start:
     print_str ln
     print_str ln
 
-    halt
+    qemu_off
 
 .data
 ln: .asciz "\n"

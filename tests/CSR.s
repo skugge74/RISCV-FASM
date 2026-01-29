@@ -28,7 +28,7 @@ _start:
     print_hex_reg t1
     
     print_str newline
-    halt
+    qemu_off
 
 .data
 msg_core:  .asciz "Core ID: "

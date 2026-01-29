@@ -33,7 +33,7 @@ _start:
   for_range i, 2, 5
     print_str msg
   endfor_range i
-  halt
+  qemu_off
 
 
 .data

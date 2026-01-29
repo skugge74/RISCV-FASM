@@ -21,7 +21,7 @@ _start:
         print_str no_match_msg
     endif
 
-  halt
+  qemu_off
 
 
 .data

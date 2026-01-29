@@ -1,7 +1,7 @@
 .org 0x80000000
 j _start
 
-.include "tests/./included.s"
+.include "tests/included.s"
 .include "./macros/data.s"     
 .include "./macros/cond_loop.s"     
 
@@ -16,7 +16,7 @@ _start:
     endrepeat 
     
     print_str msg 
-    halt
+    qemu_off
 
 
 .data

@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 #define MAX_LINE_LEN 256
-#define MAX_MACROS 64
+#define MAX_MACROS 128
 #define MAX_STACK_DEPTH 32
 
 typedef struct {

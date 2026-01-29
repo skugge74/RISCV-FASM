@@ -61,7 +61,7 @@ _start:
     endfor_range i
 
     print_str ln
-    halt
+    qemu_off
 
 .data
 ln:        .asciz "\n"

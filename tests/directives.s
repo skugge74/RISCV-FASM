@@ -53,7 +53,7 @@ _start:
    
     print_str ln
     print_int_imm TEST
-    halt
+    qemu_off
 
 .data
 ln: .asciz "\n"

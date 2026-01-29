@@ -31,7 +31,7 @@ _start:
 
     print_str ln
     print_str msg_done
-    halt
+    qemu_off
 
 .data
 ln:          .asciz "\n"

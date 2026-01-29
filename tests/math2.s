@@ -87,8 +87,7 @@ _start:
     print_str ln
 
     # Halt loop
-    ebreak
-    j _start
+    qemu_off
 
 # ==========================================
 # DATA SECTION

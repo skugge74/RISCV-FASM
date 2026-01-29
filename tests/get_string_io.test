@@ -1,0 +1,7 @@
+=== Kdex RISC-V Shell v1.0 ===
+kdex> help
+Commands: help, status, reboot, exit
+kdex> status
+System OK. Memory at 0x80000000.
+kdex> exit
+Shutting down.

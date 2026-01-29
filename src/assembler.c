@@ -670,6 +670,10 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
         
         // 1. Macro Definition (Must be handled here, not recursively)
         if (!strcmp(ins, "macro")) {
+if (macro_lib_count >= MAX_MACROS) {
+                panic("Too many macros! Increase MAX_MACROS in your header.");
+                return;
+            }
             defining_macro = true;
             strcpy(macro_lib[macro_lib_count].name, a1);
             macro_lib[macro_lib_count].line_count = 0;

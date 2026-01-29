@@ -50,6 +50,9 @@ dump: $(TARGET)
 		exit 1; \
 	fi
 
+test: all
+	python3 test.py
+
 # 3. Build the Assembler itself
 $(TARGET): $(OBJS)
 	@echo "Linking $(TARGET)..."

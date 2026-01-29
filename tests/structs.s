@@ -32,7 +32,7 @@ _start:
     
     print_int_reg t0    ; Prints 999
     print_str ln
-    halt
+    qemu_off
 
 .data
 ln: .asciz "\n"

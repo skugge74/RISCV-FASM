@@ -2,8 +2,11 @@
 # RISC-V ASSEMBLER TEST SUITE
 # ==========================================
 .org 0x80000000
-.text
 
+j _start
+.include "macros/data.s"
+
+.text
 _start:
     # --------------------------------------
     # TEST 1: Basic Arithmetic & Registers
@@ -53,4 +56,4 @@ _start:
     # --------------------------------------
     # FINISH
     # --------------------------------------
-    ebreak
+    qemu_off

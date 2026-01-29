@@ -10,9 +10,7 @@ _start:
     # This should generate 2 instructions (auipc + jalr)
     call my_func
 
-    # Stop here
-    ebreak
-
+    qemu_off
 # Define a function far away (or close, doesn't matter)
 my_func:
     li t0, 42

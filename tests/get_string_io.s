@@ -43,11 +43,11 @@ _start:
         strcmp input_buffer, cmd_exit, t0
         if eq, t0, zero
             print_str msg_bye
-            halt
+            qemu_off
         endif
 
     endwhile
-    halt
+    qemu_off
 
 .data
 .align 4

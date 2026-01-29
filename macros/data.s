@@ -10,6 +10,12 @@ macro init_uart
     li s1, 0x10000000
 endm
 
+macro qemu_off
+    li t0, 0x100000     ; Address of QEMU "SiFive Test" device
+    li t1, 0x5555       ; 0x5555 = Power Off (Pass)
+    sw t1, 0(t0)        ; Write to address -> QEMU closes instantly
+endm
+
 ; ==========================================================
 ; MAXIMUM of 2 registers
 ; Usage: max dst, src1, src2
