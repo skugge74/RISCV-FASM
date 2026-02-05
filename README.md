@@ -1,7 +1,7 @@
 # Kdex RISC-V High-Level Assembler
 
 A robust, custom-built Assembler for RISC-V.
-This project bridges the gap between raw assembly and high-level logic,allowing you to write complex loops and use complex data structures using a powerful Stack-Based Macro System while retaining bit-perfect control over the hardware.
+This project bridges the gap between raw assembly and high-level logic,allowing the writing of complex loops and use complex data structures using a powerful Stack-Based Macro System while retaining bit-perfect control over the hardware.
 
 It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-metal execution on RISC-V processors or emulators (QEMU).
 ## FEATURES
@@ -28,8 +28,11 @@ It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-meta
 4) **Other things**
     - CSR Support: Full support for Control Status Registers (csrr, csrw) for OS development.
     - Multiple Inclusion: manage large projects with `.include "file.s"`.
-    - #TODO: Recursive Inclusion
- 
+5) TODO
+    - Recursive Inclusion
+    - dynamic number of args for macros
+    - add @@, @f, @d for anonymous labels handling
+    
 ## BUILD
 **REQUIREMENTS:**
 - riscv64-linux-gnu-objdump
@@ -46,7 +49,7 @@ It generates raw 32-bit little-endian binary images (`.bin`) ready for bare-meta
 This assembler treats macros as high-level constructs. You can define custom control structures that compile down to optimized assembly.
 
 ### Defining a macro
-Use `macro` and `endm`. Use `%n` for arguments and `%u` for unique IDs.
+Use `macro` and `endm`. Use `%n` (where `n` is a number) for arguments and `%u` for unique IDs.
 
 ```assembly
 macro print_int %1

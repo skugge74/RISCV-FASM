@@ -25,7 +25,7 @@ HEX_OUT := $(FILE:.s=.bin)
 
 all: $(TARGET)
 
-# 1. Assemble and Run in QEMU
+
 # Usage: make run FILE=macros/data.s
 run: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
@@ -38,7 +38,7 @@ run: $(TARGET)
 		exit 1; \
 	fi
 
-# 2. Assemble and Dump Disassembly
+
 # Usage: make dump FILE=macros/data.s
 dump: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
@@ -50,10 +50,10 @@ dump: $(TARGET)
 		exit 1; \
 	fi
 
-test: all
+test: clean all
 	python3 test.py
 
-# 3. Build the Assembler itself
+
 $(TARGET): $(OBJS)
 	@echo "Linking $(TARGET)..."
 	@$(CC) $(OBJS) -o $@ $(DEBUG)

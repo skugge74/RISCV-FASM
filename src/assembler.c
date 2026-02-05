@@ -70,7 +70,6 @@ void simplify_punct(char *str) {
 
 
 bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4) {
-    // 1. Clear all buffers
     *ins = *arg1 = *arg2 = *arg3 = *arg4 = '\0';
     
     char *buffers[] = {ins, arg1, arg2, arg3, arg4};
@@ -78,17 +77,13 @@ bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, 
     int idx = 0;
     int parens = 0;
     
-    // Safety limit to prevent buffer overflow (matches your array sizes)
     const int BUF_SIZE = 127; 
     
-    // 2. Skip leading whitespace
     while (isspace((unsigned char)*str)) str++;
     
-    // 3. Loop through characters
     while (*str && current_buf < 5) {
         char c = *str;
 
-        // Stop parsing if we hit a comment
         if (c == ';' || c == '#') break;
 
         if (c == '(') parens++;
@@ -98,11 +93,9 @@ bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, 
             if (parens == 0) {
                 // CASE A: Space OUTSIDE parens -> Split to next argument
                 if (idx > 0) {
-                    buffers[current_buf][idx] = '\0'; // Terminate current string
+                    buffers[current_buf][idx] = '\0';
                     current_buf++;
-                    idx = 0; // Reset index for new buffer
-                    
-                    // Skip any extra whitespace (e.g., "add   t0, t1")
+                    idx = 0; 
                     while (isspace((unsigned char)*(str + 1))) str++;
                 }
             } else {
@@ -115,11 +108,7 @@ bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, 
         }
         str++;
     }
-    
-    // Terminate the last buffer we were writing to
     if (current_buf < 5) buffers[current_buf][idx] = '\0';
-    
-    // Return true if we found at least an instruction
     return strlen(ins) > 0;
 }
 
@@ -259,9 +248,6 @@ int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
         return target_addr; 
     }
 
-    // ============================================================
-    // ERROR CHECKING LOGIC
-    // ============================================================
     if (current_pass == 2) {
         panic("Undefined symbol: '%s'", name);
     }
@@ -279,7 +265,6 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
     int parens = 0;
     int split_idx = -1;
     // We start with a high number so we can find the "lowest" precedence operator.
-    // In C, operators with LOWER precedence are split FIRST (executed last).
     int lowest_prec = 999; 
 
     for (int i = 0; str[i]; i++) {
@@ -296,18 +281,17 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
             // 5. Add/Sub (+, -)
             // 6. Mul/Div (*, /)
             
-            // Check for 2-char operators (<<, >>)
+
             if (str[i] == '<' && str[i+1] == '<') prec = 4;
             else if (str[i] == '>' && str[i+1] == '>') prec = 4;
             
-            // Check for 1-char operators
             else if (str[i] == '|') prec = 1;
             else if (str[i] == '^') prec = 2;
             else if (str[i] == '&') prec = 3;
             else if (str[i] == '+' || str[i] == '-') prec = 5;
             else if (str[i] == '*' || str[i] == '/') prec = 6;
             
-            // If we found a valid operator with lower or equal precedence, mark it
+
             if (prec <= lowest_prec && prec < 999) {
                 lowest_prec = prec;
                 split_idx = i;
@@ -316,11 +300,11 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
     }
 
     if (split_idx != -1) {
-        // Handle the split
+
         int op_len = 1;
         char op_char = str[split_idx];
         
-        // Detect 2-char operators to advance pointer correctly
+
         if ((op_char == '<' && str[split_idx+1] == '<') || 
             (op_char == '>' && str[split_idx+1] == '>')) {
             op_len = 2;
@@ -328,18 +312,18 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
 
         str[split_idx] = '\0'; 
         
-        // Recursively evaluate Left and Right sides
+
         int left = eval_math(str, current_offset, false);
         int right = eval_math(str + split_idx + op_len, current_offset, false);
 
         int result = 0;
         
-        // Handle Shifts first (2 chars)
+
         if (op_len == 2) {
              if (op_char == '<') result = left << right;
              else result = left >> right;
         } 
-        // Handle Standard Operators
+
         else {
             switch (op_char) {
                 case '|': result = left | right; break;
@@ -358,13 +342,13 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
         return result;
     }
 
-    // Handle Parentheses: (1+2) -> 1+2
+
     if (str[0] == '(' && str[strlen(str)-1] == ')') {
         str[strlen(str)-1] = '\0'; 
         return eval_math(str + 1, current_offset, is_relative); 
     }
 
-    // Base Case: Number or Symbol
+
     return resolve_val(str, current_offset, is_relative);
 }
 
@@ -525,26 +509,20 @@ void handle_directive(char *directive, char *args, bool write_mode) {
         else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
         // Usage: .equ NAME, VALUE
         char name[64];
-        
-        // 1. Skip leading whitespace
+
         char *ptr = args;
         while (isspace((unsigned char)*ptr)) ptr++;
         
-        // 2. Parse the name
-        // FIX: Stop at space OR comma
         int i = 0;
         while (*ptr && !isspace((unsigned char)*ptr) && *ptr != ',' && i < 63) {
             name[i++] = *ptr++;
         }
         name[i] = '\0';
 
-        // 3. Skip separators (spaces and/or comma)
-        // FIX: Move ptr past the comma so eval_math sees clean numbers
         while (*ptr && (isspace((unsigned char)*ptr) || *ptr == ',')) {
             ptr++;
         }
 
-        // 4. The rest is the value
         if (i > 0 && *ptr) {
             int val = eval_math(ptr, as_state.size, false);
             add_or_update_variable(name, val);
@@ -668,9 +646,8 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
         char ins[32], a1[32], a2[32], a3[32], a4[32];
         if (!split_line(work, ins, a1, a2, a3, a4)) continue;
         
-        // 1. Macro Definition (Must be handled here, not recursively)
         if (!strcmp(ins, "macro")) {
-if (macro_lib_count >= MAX_MACROS) {
+            if (macro_lib_count >= MAX_MACROS) {
                 panic("Too many macros! Increase MAX_MACROS in your header.");
                 return;
             }
@@ -689,13 +666,11 @@ if (macro_lib_count >= MAX_MACROS) {
             continue;
         }
 
-        // 2. Stack Handling (for nested blocks)
         if (stack_ptr >= 0) {
             int current_id = peek_id();
             substitute_args_with_id(line, "", "", "", "", current_id);
         }
 
-        // 3. Process the Line (Handles Macros, Directives, Instructions)
         process_line(line, write_mode);
     }
 }
@@ -713,7 +688,6 @@ void process_line(char *line, bool write_mode) {
 
     simplify_punct(work);
     
-    // 2. Skip Empty/Comments
     if (work[0] == '\0' || work[0] == ';' || work[0] == '#') return;
 
     char ins[64], a1[128], a2[128], a3[128], a4[128];
@@ -746,11 +720,9 @@ void process_line(char *line, bool write_mode) {
             // Substitute Arguments (%1..%4) and Unique ID (%u)
             substitute_args_with_id(expanded, a1, a2, a3, a4, current_id);
             
-            // CRITICAL: Call process_line recursively!
-            // This allows the expanded lines to contain other macros or pseudo-ops.
             process_line(expanded, write_mode); 
         }
-        return; // Line is fully handled by expansion
+        return; 
     }
 
     // ==================================================
@@ -801,7 +773,7 @@ void process_line(char *line, bool write_mode) {
     if (as_state.current_section == SECTION_DATA) return;
 
     // ==================================================
-    // 5. INSTRUCTION ENCODING
+    // INSTRUCTION ENCODING
     // ==================================================
     int v1 = 0, v2 = 0, v3 = 0;
 
