@@ -1,93 +1,72 @@
 #!/bin/bash
 
 # --- Configuration ---
-ASSEMBLER="../riscv-fasm"  # Change this if your binary is named differently
-TEST_FILE="./test.s"
-OBJ_FILE="./test.o"
+ASSEMBLER="../riscv-fasm"
+ASM_FILE="add_asm.s"
+OBJ_FILE="add_asm.o"
+C_FILE="main.c"
+EXEC_FILE="my_hybrid_program"
+EXPECTED_EXIT=42
 
 # --- Colors ---
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m'
+CYAN='\033[1;36m'
+NC='\033[0m' # No Color
 
-echo -e "${YELLOW}--- Running ELF Format Integration Test ---${NC}"
+echo -e "${CYAN}==========================================${NC}"
+echo -e "${CYAN}   Running RISC-V C-Interop ELF Test      ${NC}"
+echo -e "${CYAN}==========================================${NC}"
 
-# 1. Ensure the assembler exists
-if [ ! -f "$ASSEMBLER" ]; then
-    echo -e "${RED}✘ Error: Assembler binary '$ASSEMBLER' not found.${NC}"
+# 1. Check Dependencies
+if ! command -v riscv64-unknown-elf-gcc &> /dev/null; then
+    echo -e "${RED}✘ Error: riscv64-unknown-elf-gcc is not installed or not in PATH.${NC}"
+    exit 1
+fi
+if ! command -v qemu-riscv32 &> /dev/null; then
+    echo -e "${RED}✘ Error: qemu-riscv32 is not installed or not in PATH.${NC}"
     exit 1
 fi
 
-# 2. Run the assembler
-echo "Assembling $TEST_FILE to ELF..."
-$ASSEMBLER $TEST_FILE -f elf -o $OBJ_FILE
+# 2. Assemble the RISC-V file using your custom assembler
+echo -e "\n${YELLOW}[1/3] Assembling ${ASM_FILE}...${NC}"
+$ASSEMBLER $ASM_FILE -f elf -o $OBJ_FILE
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}✘ BUILD FAILED: Assembler returned an error.${NC}"
+if [ $? -ne 0 ] || [ ! -f "$OBJ_FILE" ]; then
+    echo -e "${RED}✘ BUILD FAILED: Custom Assembler returned an error.${NC}"
     exit 1
 fi
 
-if [ ! -f "$OBJ_FILE" ]; then
-    echo -e "${RED}✘ BUILD FAILED: $OBJ_FILE was not created.${NC}"
+# 3. Compile the C file and link it using GCC
+echo -e "${YELLOW}[2/3] Linking ${C_FILE} and ${OBJ_FILE} with GCC...${NC}"
+riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib $C_FILE $OBJ_FILE -o $EXEC_FILE
+
+if [ $? -ne 0 ] || [ ! -f "$EXEC_FILE" ]; then
+    echo -e "${RED}✘ LINK FAILED: GCC Linker returned an error.${NC}"
     exit 1
 fi
 
-# --- 3. Verify Relocations ---
-echo "Checking Relocation Table..."
-RELOCS=$(readelf -r $OBJ_FILE 2>/dev/null)
+# 4. Run the hybrid program in QEMU and capture the exit code
+echo -e "${YELLOW}[3/3] Executing in QEMU...${NC}"
+qemu-riscv32 ./$EXEC_FILE
+RESULT=$?
 
-# Count total RISC-V relocations (Should be exactly 5)
-RELOC_COUNT=$(echo "$RELOCS" | grep -c "R_RISCV")
-if [ "$RELOC_COUNT" -ne 5 ]; then
-    echo -e "${RED}✘ FAIL: Expected 5 relocations, found $RELOC_COUNT.${NC}"
+# 5. Verify the Result
+echo -e "\n──────────────────────────────────────────"
+if [ $RESULT -eq $EXPECTED_EXIT ]; then
+    echo -e "${GREEN}✔ C-INTEROP TEST PASSED!${NC}"
+    echo -e "  Expected Exit Code: ${EXPECTED_EXIT}"
+    echo -e "  Actual Exit Code:   ${GREEN}${RESULT}${NC}"
+    
+    # Cleanup on success
+    rm -f $OBJ_FILE $EXEC_FILE
+    exit 0
+else
+    echo -e "${RED}✘ C-INTEROP TEST FAILED!${NC}"
+    echo -e "  Expected Exit Code: ${EXPECTED_EXIT}"
+    echo -e "  Actual Exit Code:   ${RED}${RESULT}${NC}"
+    
+    # Leave artifacts for debugging
     exit 1
 fi
-
-# Check for specific relocations
-if ! echo "$RELOCS" | grep -q "R_RISCV_HI20.*external_variable"; then
-    echo -e "${RED}✘ FAIL: Missing HI20 relocation for 'external_variable'${NC}"
-    exit 1
-fi
-if ! echo "$RELOCS" | grep -q "R_RISCV_LO12_I.*external_variable"; then
-    echo -e "${RED}✘ FAIL: Missing LO12_I relocation for 'external_variable'${NC}"
-    exit 1
-fi
-if ! echo "$RELOCS" | grep -q "R_RISCV_JAL.*exit_program"; then
-    echo -e "${RED}✘ FAIL: Missing JAL relocation for 'exit_program'${NC}"
-    exit 1
-fi
-
-# --- 4. Verify Symbol Table ---
-echo "Checking Symbol Table..."
-SYMBOLS=$(readelf -s $OBJ_FILE 2>/dev/null)
-
-# Assert external symbols are marked as UND (Undefined)
-for SYM in "external_variable" "printf" "exit_program"; do
-    if ! echo "$SYMBOLS" | grep -q "UND $SYM"; then
-        echo -e "${RED}✘ FAIL: Symbol '$SYM' is not marked as UND (Undefined).${NC}"
-        exit 1
-    fi
-done
-
-# Assert _start is defined (Does NOT have UND)
-if echo "$SYMBOLS" | grep " _start" | grep -q "UND"; then
-    echo -e "${RED}✘ FAIL: Symbol '_start' should be defined, but is marked UND.${NC}"
-    exit 1
-fi
-
-# Assert local labels are NOT in the table as undefined globals
-if echo "$SYMBOLS" | grep -q "UND.*local_loop"; then
-    echo -e "${RED}✘ FAIL: Local label '.local_loop' leaked into the symbol table as UND.${NC}"
-    exit 1
-fi
-
-# --- Success ---
-echo -e "${GREEN}✔ ELF Integration Test Passed!${NC}"
-echo "  - 5/5 Relocations verified."
-echo "  - External symbols correctly marked UND."
-echo "  - Local symbols resolved internally."
-
-# Cleanup
-rm -f $OBJ_FILE
-exit 0

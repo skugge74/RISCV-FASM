@@ -23,9 +23,9 @@ void print_banner() {
     printf("└────────────────────────────────────────────────────────┘\n" CLR_RESET);
 }
 
+    bool output_elf = false;
 int main(int argc, char **argv) {
     clock_t start_time = clock();
-    bool output_elf = false;
     char *input_file = NULL;
     char *output_file = NULL;
 
