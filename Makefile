@@ -13,45 +13,58 @@ DEBUG     := -g -O0
 OBJDUMP   := riscv64-linux-gnu-objdump
 QEMU      := qemu-system-riscv32
 
-# --- Files ---
+# --- Files & Formats ---
 SRCS      := $(wildcard $(SRC_DIR)/*.c)
 OBJS      := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
-# Default assembly file if none provided
-FILE    ?= tests/example.s
-HEX_OUT := $(FILE:.s=.bin)
+# CLI Options
+FILE      ?= tests/example.s
+FORMAT    ?= flat
+# Set QUIET=1 to silence the assembler UI (useful for automation)
+QUIET     ?= 0
+Q_FLAG    := $(if $(filter 1,$(QUIET)),-q,)
+
+# Dynamically set objdump flags and expected output extension
+ifeq ($(FORMAT),elf)
+    EXT           := .o
+    OBJDUMP_FLAGS := -d -M no-aliases
+else
+    EXT           := .bin
+    OBJDUMP_FLAGS := -D -b binary -m riscv:rv32
+endif
+
+OUT_FILE := $(basename $(FILE))$(EXT)
 
 # --- Rules ---
 
 all: $(TARGET)
 
-
-# Usage: make run FILE=macros/data.s
+# Usage: make run FILE=tests/example.s [FORMAT=elf|flat] [QUIET=1]
 run: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
-		echo "--- Assembling ---"; \
-		./$(TARGET) $(FILE) $(HEX_OUT) && \
+		echo "--- Assembling ($(FORMAT)) ---"; \
+		./$(TARGET) $(Q_FLAG) -f $(FORMAT) -o $(OUT_FILE) $(FILE) && \
 		echo "--- Running QEMU ---" && \
-		$(QEMU) -M virt -bios none -kernel $(HEX_OUT) -nographic; \
+		$(QEMU) -M virt -bios none -kernel $(OUT_FILE) -nographic; \
 	else \
 		echo "Error: File '$(FILE)' not found."; \
 		exit 1; \
 	fi
 
-# Usage: make dump FILE=macros/data.s
+# Usage: make dump FILE=tests/example.s [FORMAT=elf|flat] [QUIET=1]
 dump: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
-		./$(TARGET) $(FILE) $(HEX_OUT) && \
-		echo "--- Disassembly ---" && \
-		$(OBJDUMP) -D -b binary -m riscv:rv32 $(HEX_OUT); \
+		./$(TARGET) $(Q_FLAG) -f $(FORMAT) -o $(OUT_FILE) $(FILE) && \
+		echo "--- Disassembly ($(FORMAT)) ---" && \
+		$(OBJDUMP) $(OBJDUMP_FLAGS) $(OUT_FILE); \
 	else \
 		echo "Error: File '$(FILE)' not found."; \
 		exit 1; \
 	fi
 
+# Runs python test suite with Quiet Mode enabled for clean logs
 test: clean all
-	python3 test.py
-
+	@QUIET=1 python3 test.py
 
 $(TARGET): $(OBJS)
 	@echo "Linking $(TARGET)..."
@@ -66,6 +79,6 @@ $(BUILD_DIR):
 
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR) $(TARGET) $(TEST_DIR)/*.bin
+	@rm -rf $(BUILD_DIR) $(TARGET) $(TEST_DIR)/*.bin $(TEST_DIR)/*.o
 
-.PHONY: all run dump clean
+.PHONY: all run dump clean test

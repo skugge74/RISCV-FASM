@@ -151,12 +151,92 @@ li t1, 0xDEADBEEF
 csrw 0x340, t1       ; Write to mscratch
 
 ```
+---
+
+## 🏗️ Binary & ELF Output Formats
+
+Kdex supports two distinct output modes depending on your stage in the development lifecycle.
+
+### 1. Relocatable ELF (`-f elf`)
+**Purpose:** Industry-standard object files (`.o`) for linking with C/C++ or other assembly modules.
+* **Symbol Export:** Labels are preserved in a `.symtab` for the linker to resolve.
+* **Toolchain Friendly:** Compatible with `riscv64-linux-gnu-ld` and `gcc`.
+* **Standard Workflow:**
+  ```bash
+  ./riscv-fasm -f elf main.s -o main.o
+  riscv64-linux-gnu-ld main.o -o kernel.elf -Ttext 0x80000000
+  ```
+
+### 2. Flat Binary (`-f flat`)
+**Purpose:** Pure machine code blobs (`.bin`) for direct hardware execution.
+* **Minimalist:** No headers or metadata; the file contains only instructions and data.
+* **Origin-based:** Requires `.org` to calculate absolute jumps correctly.
+
+
 
 ---
 
-## 📅 TODO
+## 🏷️ Advanced Labeling & Macros
 
-* [ ] Recursive Inclusion
-* [x] Variadic macro arguments
-* [x] Anonymous label handling (`@@`, `@f`, `@b`)
-* [ ] Rewrite assembler in itself ?
+### Anonymous Labels (`@@`, `@f`, `@b`)
+For tiny local jumps where naming a label is a waste of time (e.g., skip logic or short loops), use the **Anonymous Label System**.
+
+* `@@`: Defines an anonymous anchor.
+* `@f`: Jumps **forward** to the next `@@`.
+* `@b`: Jumps **backward** to the previous `@@`.
+
+```assembly
+    li t0, 5
+@@:                   ; Anchor
+    addi t0, t0, -1
+    bnez t0, @b       ; Jump back to the @@ above
+    
+    beq a0, a1, @f    ; Jump forward to the next @@
+    nop
+@@:                   ; Anchor
+```
+
+### Variadic Macro Arguments (`...`)
+Kdex supports macros that accept a flexible number of arguments. This is particularly useful for building data tables or multi-register save/restore logic.
+
+* `%n`: Refers to a specific argument (e.g., `%1`, `%2`).
+* `%#`: Returns the total number of arguments passed.
+
+```assembly
+; Example: Push multiple registers to the stack
+macro push_all ...
+    addi sp, sp, -(%# * 4)   ; Allocate space based on argument count
+    for_range i, 1, %# + 1
+        sw %{i}, ((i-1)*4)(sp)
+    endfor_range
+endm
+
+; Usage:
+push_all ra, s0, s1, t0      ; Automatically handles 4 registers
+```
+
+---
+
+## 🛠️ CLI Interface (Quiet Mode)
+
+For automation, CI/CD pipelines, or the custom `test.py` suite, use **Quiet Mode** to suppress the UI banner and build summary.
+
+| Flag | Long Flag | Description |
+| --- | --- | --- |
+| `-q` | `--quiet` | Silence all non-error output. |
+| `-f` | `--format` | Set output format (`elf` or `flat`). |
+| `-o` | `--output` | Specify output filename (defaults to input with new ext). |
+
+```bash
+# Silence the UI for scripted builds
+./riscv-fasm -q -f elf tests/shell.s -o build/shell.o
+```
+
+---
+
+### 🚀 Updated TODO
+* [ ] **Recursive Inclusion:** Allow files to include files that include files.
+* [x] **Variadic macro arguments:** (Implemented 2026)
+* [x] **Anonymous label handling:** (Implemented 2026)
+* [ ] **Self-Hosting:** Rewrite the assembler in Kdex Assembly.
+

@@ -10,6 +10,9 @@
 #include <limits.h>
 #include <stdarg.h>
 
+#include <elf.h>  // Standard ELF definitions
+
+
 #define MAX_SYMBOLS 1024
 #define MAX_LINE_LEN 256
 #define MAX_BIN_SIZE 131072 
@@ -74,4 +77,9 @@ void dump_symbol_table();
 char* trim_whitespace(char* str);
 void process_line(char *line, bool write_mode);
 void panic(const char *fmt, ...);
+
+
+
+void save_elf(const char* filename); 
+
 #endif

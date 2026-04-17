@@ -652,3 +652,123 @@ void dump_symbol_table() {
 
     for (int i = 0; i < symbol_count; i++) printf("%-30s | 0x%08X\n", symbol_table[i].name, symbol_table[i].address);
 }
+
+void save_elf(const char* filename) {
+    if (!compile) return;
+
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        panic("Could not open file for writing: %s", filename);
+        return;
+    }
+
+    // 1. Hardcode the Section Header String Table (.shstrtab)
+    // This tells objdump the names of our sections.
+    char shstrtab[] = "\0.text\0.shstrtab\0.symtab\0.strtab\0";
+    int shstrtab_size = sizeof(shstrtab);
+
+    // 2. Build the Global String Table (.strtab)
+    // This holds the actual string names of all your labels/symbols.
+    char *strtab = calloc(1, 65536); 
+    int strtab_size = 1; // Index 0 is reserved for '\0'
+
+    // 3. Build the Symbol Table (.symtab)
+    Elf32_Sym symtab[MAX_SYMBOLS + 1];
+    memset(symtab, 0, sizeof(symtab));
+    int sym_count = 1; // Index 0 is reserved (Undefined symbol)
+
+    for (int i = 0; i < symbol_count; i++) {
+        // Only export valid absolute addresses
+        if (symbol_table[i].address != 0xFFFFFFFF) {
+            // Write name to string table
+            symtab[sym_count].st_name = strtab_size;
+            strcpy(&strtab[strtab_size], symbol_table[i].name);
+            strtab_size += strlen(symbol_table[i].name) + 1;
+
+            // Define Symbol Properties
+            symtab[sym_count].st_value = symbol_table[i].address - as_state.origin;
+            symtab[sym_count].st_size = 0;
+            symtab[sym_count].st_info = ELF32_ST_INFO(STB_GLOBAL, STT_NOTYPE);
+            symtab[sym_count].st_shndx = 1; // 1 = Our .text section
+            sym_count++;
+        }
+    }
+    int symtab_size = sym_count * sizeof(Elf32_Sym);
+
+    // 4. Calculate Exact File Offsets
+    uint32_t off_ehdr     = 0;
+    uint32_t off_shdr     = sizeof(Elf32_Ehdr);
+    uint32_t off_text     = off_shdr + (5 * sizeof(Elf32_Shdr));
+    uint32_t off_shstrtab = off_text + as_state.size;
+    uint32_t off_strtab   = off_shstrtab + shstrtab_size;
+    uint32_t off_symtab   = off_strtab + strtab_size;
+
+    // 5. Build the Main ELF Header
+    Elf32_Ehdr ehdr; 
+    memset(&ehdr, 0, sizeof(Elf32_Ehdr));
+    ehdr.e_ident[EI_MAG0] = ELFMAG0;
+    ehdr.e_ident[EI_MAG1] = ELFMAG1;
+    ehdr.e_ident[EI_MAG2] = ELFMAG2;
+    ehdr.e_ident[EI_MAG3] = ELFMAG3;
+    ehdr.e_ident[EI_CLASS] = ELFCLASS32;     // 32-bit
+    ehdr.e_ident[EI_DATA] = ELFDATA2LSB;     // Little Endian
+    ehdr.e_ident[EI_VERSION] = EV_CURRENT;
+    ehdr.e_type = ET_REL;                    // Relocatable Object (.o)
+    ehdr.e_machine = EM_RISCV;               // RISC-V Architecture
+    ehdr.e_version = EV_CURRENT;
+    ehdr.e_ehsize = sizeof(Elf32_Ehdr);
+    ehdr.e_shentsize = sizeof(Elf32_Shdr);
+    ehdr.e_shnum = 5;                        // 5 Sections
+    ehdr.e_shoff = off_shdr;
+    ehdr.e_shstrndx = 2;                     // Index of .shstrtab
+
+    // 6. Build the Section Headers
+    Elf32_Shdr shdr[5]; 
+    memset(shdr, 0, sizeof(shdr));
+
+    // shdr[0] is always NULL
+
+    // shdr[1] = .text (Our actual machine code)
+    shdr[1].sh_name = 1;                     // Index of ".text" in shstrtab
+    shdr[1].sh_type = SHT_PROGBITS;
+    shdr[1].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+    shdr[1].sh_addr = as_state.origin;       // E.g., 0x80000000
+    shdr[1].sh_offset = off_text;
+    shdr[1].sh_size = as_state.size;
+    shdr[1].sh_addralign = 4;
+
+    // shdr[2] = .shstrtab (Section Names)
+    shdr[2].sh_name = 7;                     
+    shdr[2].sh_type = SHT_STRTAB;
+    shdr[2].sh_offset = off_shstrtab;
+    shdr[2].sh_size = shstrtab_size;
+    shdr[2].sh_addralign = 1;
+
+    // shdr[3] = .symtab (The Symbol Table)
+    shdr[3].sh_name = 17;                    
+    shdr[3].sh_type = SHT_SYMTAB;
+    shdr[3].sh_offset = off_symtab;
+    shdr[3].sh_size = symtab_size;
+    shdr[3].sh_link = 4;                     // Links to .strtab
+    shdr[3].sh_info = 1;                     
+    shdr[3].sh_entsize = sizeof(Elf32_Sym);
+    shdr[3].sh_addralign = 4;
+
+    // shdr[4] = .strtab (Symbol Names)
+    shdr[4].sh_name = 25;                    
+    shdr[4].sh_type = SHT_STRTAB;
+    shdr[4].sh_offset = off_strtab;
+    shdr[4].sh_size = strtab_size;
+    shdr[4].sh_addralign = 1;
+
+    // 7. Write the complete ELF file to disk
+    fwrite(&ehdr, 1, sizeof(Elf32_Ehdr), f);
+    fwrite(shdr, 1, sizeof(shdr), f);
+    fwrite(as_state.image, 1, as_state.size, f);
+    fwrite(shstrtab, 1, shstrtab_size, f);
+    fwrite(strtab, 1, strtab_size, f);
+    fwrite(symtab, 1, symtab_size, f);
+
+    free(strtab);
+    fclose(f);
+}
