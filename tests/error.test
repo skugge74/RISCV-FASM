@@ -1,3 +1,3 @@
-[ERROR] tests/error.bin:46 (Pass 2): Undefined symbol: 's20'
-[ERROR] tests/error.bin:50 (Pass 2): Undefined symbol: 'nowhere'
-[ERROR] tests/error.bin:54 (Pass 2): Undefined symbol: 'x32'
+[ERROR] tests/error.s:46 (Pass 2): Undefined symbol: 's20'
+[ERROR] tests/error.s:50 (Pass 2): Undefined symbol: 'nowhere'
+[ERROR] tests/error.s:54 (Pass 2): Undefined symbol: 'x32'

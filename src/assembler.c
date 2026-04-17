@@ -21,6 +21,11 @@ int current_line = 0;
 const char *current_file = "unknown";
 int current_pass = 0;      // 1 or 2
 
+uint32_t anon_labels[MAX_SYMBOLS];
+int anon_count = 0;
+uint32_t pass1_anon_labels[MAX_SYMBOLS]; 
+int pass1_anon_count = 0;
+
 // ==========================================
 // ERROR HANDLING
 // ==========================================
@@ -125,11 +130,18 @@ void init_assembler_pass() {
     current_line = 0;
     as_state.size = 0; 
     as_state.current_section = SECTION_TEXT;
+    anon_count = 0;
 }
 
 void add_symbol(const char* name, uint32_t offset) {
     if (symbol_count >= MAX_SYMBOLS) return;
     char full_name[128];
+    if (strcmp(name, "@@") == 0) {
+        if (anon_count < MAX_SYMBOLS) {
+            anon_labels[anon_count++] = as_state.origin + offset;
+        }
+        return; // Don't add "@@" to the main symbol table
+    }
 
     bool is_macro_label = (name[0] == '.' && (strchr(name, '_') != NULL || isdigit(name[1])));
     if (is_macro_label) {
@@ -226,6 +238,34 @@ bool parse_arg(const char *arg, int *out_val) {
 }
 
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
+uint32_t absolute_pc = as_state.origin + current_offset;
+
+    // Handle Anonymous Jumps
+    if (strcmp(name, "@f") == 0 || strcmp(name, "@b") == 0) {
+    int target = -1;
+    // Use the "frozen" list from Pass 1
+    if (name[1] == 'f') { 
+        for (int i = 0; i < pass1_anon_count; i++) {
+            if (pass1_anon_labels[i] > absolute_pc) {
+                target = pass1_anon_labels[i];
+                break;
+            }
+        }
+    } else {
+        for (int i = pass1_anon_count - 1; i >= 0; i--) {
+            if (pass1_anon_labels[i] < absolute_pc) {
+                target = pass1_anon_labels[i];
+                break;
+            }
+        }
+    }
+
+        if (target != -1) {
+            return is_relative ? (target - absolute_pc) : target;
+        }
+        if (current_pass == 2) panic("Anonymous label target not found for %s", name);
+        return 0;
+    }
 
     if (strcmp(name, "$") == 0) {
         int current_addr = as_state.origin + current_offset;
@@ -676,6 +716,7 @@ void process_pass(FILE *fp, bool write_mode, const char* filename) {
 }
 
 void process_line(char *line, bool write_mode) {
+//if (current_pass == 2) printf("DEBUG Pass 2: %s\n", line);
     char work[MAX_LINE_LEN]; 
     strcpy(work, line); 
 
@@ -731,21 +772,36 @@ void process_line(char *line, bool write_mode) {
     uint32_t current_offset = as_state.size;
 
     // Handle Labels (ending in :)
+    // ==================================================
+    // 4. LABELS & SYMBOLS
+    // ==================================================
     if (ins[strlen(ins)-1] == ':') {
-        ins[strlen(ins)-1] = '\0';
-        
-        if (!write_mode) {
-            add_symbol(ins, current_offset);
-        } else {
-            // Update parent context for local labels
-            if (ins[0] != '.') strncpy(current_parent, ins, 63);
+        ins[strlen(ins)-1] = '\0'; // Strip the colon
+
+        // Case A: Anonymous Label
+        if (strcmp(ins, "@@") == 0) {
+            if (current_pass == 1) { 
+                if (anon_count < MAX_SYMBOLS) {
+                    anon_labels[anon_count++] = as_state.origin + as_state.size;
+                }
+            }
+        } 
+        // Case B: Named Label
+        else {
+            if (current_pass == 1) {
+                add_symbol(ins, as_state.size);
+            } else {
+                // In Pass 2, just update the parent scope for local labels
+                if (ins[0] != '.') strncpy(current_parent, ins, 63);
+            }
         }
         
-        // If label is on same line as code (label: instruction), shift args
+        // If the line is JUST a label (no code), exit early
         if (strlen(a1) == 0) return;
+
+        // Otherwise, shift arguments to process the instruction following the label
         strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
     }
-
     // Handle Variables (=)
     if (strcmp(a1, "=") == 0) {
         char *eq_pos = strchr(work, '='); 

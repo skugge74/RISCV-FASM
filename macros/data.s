@@ -31,14 +31,20 @@ macro max %1, %2, %3
 endm
 
 macro print_str %1
-la s0, %1   
+    addi sp, sp, -8
+    sw t0, 0(sp)
+    sw t1, 4(sp)
+    la t0, %1   
   .print_loop_%u:
-    lb s2, 0(s0)
-    beqz s2, .print_done_%u
-    sb s2, 0(s1)
-    addi s0, s0, 1
+    lb t1, 0(t0)            # Use t1 instead of s2
+    beqz t1, .print_done_%u
+    sb t1, 0(s1)            # s1 is UART base
+    addi t0, t0, 1
     j .print_loop_%u
   .print_done_%u:
+    lw t1, 4(sp)
+    lw t0, 0(sp)
+    addi sp, sp, 8
 endm
 
 

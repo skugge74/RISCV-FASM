@@ -34,6 +34,12 @@ extern int symbol_count;
 extern char current_parent[64];
 extern bool compile;
 
+extern uint32_t anon_labels[MAX_SYMBOLS];
+extern int anon_count;
+extern uint32_t pass1_anon_labels[MAX_SYMBOLS]; 
+extern int pass1_anon_count;
+
+
 uint32_t encode_R_type(int op, int f3, int f7, int rs1, int rs2, int rd);
 uint32_t encode_I_type(int op, int f3, int imm, int rs1, int rd);
 uint32_t encode_U_type(int op, int rd, int imm);
