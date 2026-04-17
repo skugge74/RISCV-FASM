@@ -1,22 +1,30 @@
 .global _start
-.global add_numbers
+.global shared_var
+.global add_to_shared_var
 .extern main
 
+# --- WRITABLE DATA SECTION ---
+.data
+.align 4
+shared_var:
+    .word 10    # Initialize the variable to 10
+
+# --- READ-ONLY CODE SECTION ---
 .text
 .align 4
 
 _start:
-    # 1. QEMU User-Mode already set up the Stack Pointer (sp) for us.
-    # We just need to jump straight into the C code!
     call main
-
-    # 2. main() will return our answer (42) in the a0 register.
-    # We leave it in a0, and tell the Linux kernel to exit with that code.
-    # 93 is the RISC-V Linux syscall number for "exit".
     li a7, 93
     ecall
 
-# Our custom macro that C will call
-add_numbers:
-    add a0, a0, a1
+# Function: Adds a0 to shared_var and returns the new value
+add_to_shared_var:
+    la t0, shared_var     # Load the address of the variable
+    lw t1, 0(t0)          # Load its current value into t1
+    
+    add t1, t1, a0        # Add the C argument (a0) to the value
+    sw t1, 0(t0)          # Store it back! (WILL SEGFAULT IF IN .TEXT)
+    
+    mv a0, t1             # Move the final value to a0 to return it
     ret

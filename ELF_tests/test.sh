@@ -37,6 +37,7 @@ if [ $? -ne 0 ] || [ ! -f "$OBJ_FILE" ]; then
     echo -e "${RED}✘ BUILD FAILED: Custom Assembler returned an error.${NC}"
     exit 1
 fi
+readelf -r $OBJ_FILE
 
 # 3. Compile the C file and link it using GCC
 echo -e "${YELLOW}[2/3] Linking ${C_FILE} and ${OBJ_FILE} with GCC...${NC}"
