@@ -1,3 +1,5 @@
+--- Assembling ---
 [ERROR] tests/error.s:46 (Pass 2): Undefined symbol: 's20'
 [ERROR] tests/error.s:50 (Pass 2): Undefined symbol: 'nowhere'
 [ERROR] tests/error.s:54 (Pass 2): Undefined symbol: 'x32'
+make: *** [Makefile:31: run] Error 1

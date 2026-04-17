@@ -30,20 +30,19 @@ all: $(TARGET)
 run: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
 		echo "--- Assembling ---"; \
-		./$(TARGET) $(FILE) $(HEX_OUT); \
-		echo "--- Running QEMU ---"; \
+		./$(TARGET) $(FILE) $(HEX_OUT) && \
+		echo "--- Running QEMU ---" && \
 		$(QEMU) -M virt -bios none -kernel $(HEX_OUT) -nographic; \
 	else \
 		echo "Error: File '$(FILE)' not found."; \
 		exit 1; \
 	fi
 
-
 # Usage: make dump FILE=macros/data.s
 dump: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
-		./$(TARGET) $(FILE) $(HEX_OUT); \
-		echo "--- Disassembly ---"; \
+		./$(TARGET) $(FILE) $(HEX_OUT) && \
+		echo "--- Disassembly ---" && \
 		$(OBJDUMP) -D -b binary -m riscv:rv32 $(HEX_OUT); \
 	else \
 		echo "Error: File '$(FILE)' not found."; \

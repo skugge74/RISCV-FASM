@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "preprocessor.h"
-#include "assembler.h" // For MAX_LINE_LEN definition if needed
+#include "assembler.h" 
 
 // ==========================================
 // GLOBAL STATE
@@ -11,12 +12,9 @@ Macro macro_lib[MAX_MACROS];
 int macro_lib_count = 0;
 bool defining_macro = false;
 
-// Stack for nested macros (e.g., loops inside loops)
 ControlBlock control_stack[MAX_STACK_DEPTH];
 int stack_ptr = -1;
 int unique_id_counter = 0;
-// This variable is likely defined in assembler.c
-// We use 'extern' to tell the compiler it exists elsewhere.
 
 // ==========================================
 // MACRO LOOKUP
@@ -31,50 +29,83 @@ int find_macro(const char *name) {
 }
 
 // ==========================================
-// STRING SUBSTITUTION
+// STRING SUBSTITUTION (The Heart of Variadic Macros)
 // ==========================================
-void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3, char *arg4, int id) {
+void substitute_args_with_id(char *line, char args[MAX_ARGS][128], int arg_count, int id) {
     char buffer[MAX_LINE_LEN];
     char *p;
-    char *args[] = {arg1, arg2, arg3, arg4};
-    
-    // 1. Substitute Arguments (%1, %2, %3, %4)
-    for (int i = 1; i <= 4; i++) {
-        char tag[4]; 
-        snprintf(tag, 4, "%%%d", i); // Create tag "%1", "%2"...
-        
-        while ((p = strstr(line, tag))) {
-            // Safety: Don't overflow buffer
-            if (strlen(line) + strlen(args[i-1]) >= MAX_LINE_LEN) {
-                printf("[WARN] Macro expansion too long, truncating.\n");
-                break;
-            }
 
+    // --- 1. Substitute %# (Actual Argument Count) ---
+    // Useful for: addi sp, sp, -(%# * 4)
+    while ((p = strstr(line, "%#"))) {
+        char count_str[16];
+        sprintf(count_str, "%d", arg_count);
+        int pos = p - line;
+        
+        buffer[0] = '\0';
+        strncat(buffer, line, pos);
+        strcat(buffer, count_str);
+        strcat(buffer, p + 2);
+        strcpy(line, buffer);
+    }
+
+    // --- 2. Substitute %* (Variadic: All Arguments) ---
+    if (strstr(line, "%*")) {
+        char var_string[MAX_LINE_LEN] = "";
+        for (int i = 0; i < arg_count; i++) {
+            if (strlen(args[i]) > 0) {
+                if (strlen(var_string) > 0) strcat(var_string, ", ");
+                strcat(var_string, args[i]);
+            }
+        }
+
+        while ((p = strstr(line, "%*"))) {
             int pos = p - line;
-            memcpy(buffer, line, pos); // Copy text BEFORE the tag
-            buffer[pos] = '\0';
-            
-            strcat(buffer, args[i-1]); // Insert argument
-            strcat(buffer, p + 2);     // Copy text AFTER the tag
-            
-            strcpy(line, buffer);      // Update the main line
+            buffer[0] = '\0';
+            strncat(buffer, line, pos);
+            strcat(buffer, var_string);
+            strcat(buffer, p + 2);
+            strcpy(line, buffer);
         }
     }
 
-    // 2. Substitute Unique ID (%u)
+    // --- 3. Substitute %1, %2, ... %n (Numbered Arguments) ---
+    for (int i = 0; i < arg_count; i++) {
+        char tag[16]; 
+        sprintf(tag, "%%%d", i + 1);
+        
+        while ((p = strstr(line, tag))) {
+            // Edge case: if tag is %1, make sure we aren't accidentally hitting %10
+            if (isdigit(p[strlen(tag)]) && (i + 1 < 10)) {
+                // Skip if this is a partial match of a larger number
+                p++; 
+                continue; 
+            }
+
+            int pos = p - line;
+            buffer[0] = '\0';
+            strncat(buffer, line, pos);
+            strcat(buffer, args[i]);
+            strcat(buffer, p + strlen(tag));
+            
+            if (strlen(buffer) < MAX_LINE_LEN) {
+                strcpy(line, buffer);
+            } else {
+                break;
+            }
+        }
+    }
+
+    // --- 4. Substitute %u (Unique Macro Instance ID) ---
     while ((p = strstr(line, "%u"))) {
         char id_str[16];
-        snprintf(id_str, 16, "%d", id);
-
-        if (strlen(line) + strlen(id_str) >= MAX_LINE_LEN) break;
+        sprintf(id_str, "%d", id);
 
         int pos = p - line;
-        memcpy(buffer, line, pos);
-        buffer[pos] = '\0';
-        
+        buffer[0] = '\0';
+        strncat(buffer, line, pos);
         strcat(buffer, id_str);
         strcat(buffer, p + 2);
-        
         strcpy(line, buffer);
     }
 }
@@ -88,25 +119,23 @@ void push_id(int id, const char* name) {
         control_stack[stack_ptr].id = id;
         strncpy(control_stack[stack_ptr].name, name, 31);
     } else {
-        printf("[ERROR] Macro stack overflow! Too much nesting.\n");
+        fprintf(stderr, "[ERROR] Macro stack overflow!\n");
     }
 }
 
 int pop_id(const char* end_name) {
     if (stack_ptr < 0) return 0;
 
-    // Logic Check: Are we closing the right block?
-    // e.g., if we see 'endloop' but stack top is 'if', that's a bug.
-    if (strcmp(control_stack[stack_ptr].name, end_name) != 0) {
-        printf("[WARN] Mismatched block! Found end%s but expected end%s\n", 
-                end_name, control_stack[stack_ptr].name);
+    // Verification check to ensure blocks are closed in order
+    if (end_name && strcmp(control_stack[stack_ptr].name, end_name) != 0) {
+        fprintf(stderr, "[WARN] Mismatched block! Expected end%s, found end%s\n", 
+                control_stack[stack_ptr].name, end_name);
     }
     return control_stack[stack_ptr--].id;
 }
 
 int peek_id() {
-    if (stack_ptr >= 0) return control_stack[stack_ptr].id;
-    return 0; // Default ID if no stack
+    return (stack_ptr >= 0) ? control_stack[stack_ptr].id : 0;
 }
 
 int line_contains_comma(const char *line) {

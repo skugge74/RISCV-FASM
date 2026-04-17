@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include "assembler.h"
 
 #define MAX_LINE_LEN 256
 #define MAX_MACROS 128
@@ -32,7 +33,8 @@ int line_contains_comma(const char *line);
 void push_id(int id, const char* name);
 int peek_id();
 int pop_id(const char* end_name);
-void substitute_args_with_id(char *line, char *arg1, char *arg2, char *arg3, char *arg4, int id);
+
+void substitute_args_with_id(char *line, char args[MAX_ARGS][128], int arg_count, int id); 
 int find_macro(const char *name);
 
 #endif

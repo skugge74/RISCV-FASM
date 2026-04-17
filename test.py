@@ -98,22 +98,16 @@ def run_test(filename):
 
     # --- VERIFICATION LOGIC ---
     if is_error_test:
-        start_marker = "--- Assembling ---"
-        end_marker = "--- SYMBOL TABLE DUMP ---"
+        clean_log = normalize_output(full_output.strip())
 
-        if start_marker in full_output and end_marker in full_output:
-            raw_log = full_output.split(start_marker)[1].split(end_marker)[0].strip()
-            clean_log = normalize_output(raw_log)
-
-            if clean_log == expected_output:
-                passed(filename)
-            else:
-                failed(filename, clean_log, expected_output)
+        if clean_log == expected_output:
+            passed(filename)
         else:
-            failed(filename, normalize_output(full_output.strip()), expected_output)
+            failed(filename, clean_log, expected_output)
 
     else:
         qemu_marker = "--- Running QEMU ---"
+        # ... rest of the code ...
         
         if qemu_marker not in full_output:
             failed(filename, "QEMU did not start (Compilation Failed?)", expected_output)

@@ -21,7 +21,7 @@ _start:
     print_str nl  
     print_str int
     print_int_imm $$
-    print_str nl  
+    print_str ln  
     qemu_off
 .data
 msg: .asciz "$ is: \n"

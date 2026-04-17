@@ -13,6 +13,7 @@
 #define MAX_SYMBOLS 1024
 #define MAX_LINE_LEN 256
 #define MAX_BIN_SIZE 131072 
+#define MAX_ARGS 16
 
 typedef enum { SECTION_TEXT, SECTION_DATA } SectionType;
 
@@ -54,13 +55,16 @@ void add_or_update_variable(const char* name, int value);
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative);
 
 void simplify_punct(char *str);
-bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4);
+//bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4);
+bool split_line(const char *str, char *ins, char args[MAX_ARGS][128], int *arg_count);
 bool parse_arg(const char *arg, int *out_val);
 
 int eval_math(char *expr, uint32_t current_offset, bool is_relative);
 void process_pass(FILE *fp, bool write_mode, const char* filename);
 void process_instruction(char *line, bool write_mode);
-void handle_directive(char *directive, char *args, bool write_mode);
+//void handle_directive(char *directive, char *args, bool write_mode);
+
+void handle_directive(char *directive, char *args_str, char args[MAX_ARGS][128], int arg_count, bool write_mode);
 void init_assembler_pass();
 void init_assembler_total();
 
@@ -68,8 +72,6 @@ void save_binary(const char* filename);
 void dump_symbol_table();
 
 char* trim_whitespace(char* str);
-void process_line(char *line, bool write_mode);
-
 void process_line(char *line, bool write_mode);
 void panic(const char *fmt, ...);
 #endif

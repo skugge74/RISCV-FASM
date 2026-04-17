@@ -10,7 +10,7 @@
 #include "preprocessor.h"
 
 // ==========================================
-// GLOBAL STATE & CONTEXT
+// GLOBAL STATE
 // ==========================================
 Symbol symbol_table[MAX_SYMBOLS];
 int symbol_count = 0;
@@ -19,16 +19,13 @@ Assembler as_state;
 bool compile = true;
 int current_line = 0;
 const char *current_file = "unknown";
-int current_pass = 0;      // 1 or 2
+int current_pass = 0;
 
 uint32_t anon_labels[MAX_SYMBOLS];
 int anon_count = 0;
 uint32_t pass1_anon_labels[MAX_SYMBOLS]; 
 int pass1_anon_count = 0;
 
-// ==========================================
-// ERROR HANDLING
-// ==========================================
 void panic(const char *fmt, ...) {
     va_list args;
     fprintf(stderr, "\033[1;31m[ERROR] %s:%d (Pass %d): \033[0m", current_file, current_line, current_pass);
@@ -39,9 +36,6 @@ void panic(const char *fmt, ...) {
     compile = false;
 }
 
-// ==========================================
-// UTILS
-// ==========================================
 char* trim_whitespace(char* str) {
     while(isspace((unsigned char)*str)) str++;
     if(*str == 0) return str;
@@ -54,81 +48,47 @@ char* trim_whitespace(char* str) {
 void simplify_punct(char *str) {
     char buffer[MAX_LINE_LEN * 2]; 
     int j = 0;
-
     for (int i = 0; str[i]; i++) {
-        if (str[i] == ',') {
-            buffer[j++] = ' ';
-        }
-        else if (str[i] == '=') {
-            buffer[j++] = ' ';
-            buffer[j++] = '=';
-            buffer[j++] = ' ';
-        }
-        else {
-            buffer[j++] = str[i];
-        }
+        if (str[i] == ',') buffer[j++] = ' ';
+        else if (str[i] == '=') { buffer[j++] = ' '; buffer[j++] = '='; buffer[j++] = ' '; }
+        else buffer[j++] = str[i];
     }
-    
     buffer[j] = '\0';
     strcpy(str, buffer); 
 }
 
-
-bool split_line(const char *str, char *ins, char *arg1, char *arg2, char *arg3, char *arg4) {
-    *ins = *arg1 = *arg2 = *arg3 = *arg4 = '\0';
-    
-    char *buffers[] = {ins, arg1, arg2, arg3, arg4};
-    int current_buf = 0;
-    int idx = 0;
-    int parens = 0;
-    
-    const int BUF_SIZE = 127; 
-    
+bool split_line(const char *str, char *ins, char args[MAX_ARGS][128], int *arg_count) {
+    *ins = '\0'; *arg_count = 0;
+    int idx = 0, parens = 0;
     while (isspace((unsigned char)*str)) str++;
+    if (!*str || *str == ';' || *str == '#') return false;
     
-    while (*str && current_buf < 5) {
-        char c = *str;
+    while (*str && !isspace((unsigned char)*str) && *str != ',' && idx < 63) ins[idx++] = *str++;
+    ins[idx] = '\0';
 
-        if (c == ';' || c == '#') break;
-
-        if (c == '(') parens++;
-        if (c == ')') parens--;
-
-        if (isspace((unsigned char)c)) {
-            if (parens == 0) {
-                // CASE A: Space OUTSIDE parens -> Split to next argument
-                if (idx > 0) {
-                    buffers[current_buf][idx] = '\0';
-                    current_buf++;
-                    idx = 0; 
-                    while (isspace((unsigned char)*(str + 1))) str++;
-                }
-            } else {
-                // CASE B: Space INSIDE parens -> Keep it (it's math)
-                if (idx < BUF_SIZE) buffers[current_buf][idx++] = c;
-            }
-        } else {
-            // CASE C: Normal character -> Keep it
-            if (idx < BUF_SIZE) buffers[current_buf][idx++] = c;
+    while (*str && *arg_count < MAX_ARGS) {
+        while (isspace((unsigned char)*str) || *str == ',') str++;
+        if (!*str || *str == ';' || *str == '#') break;
+        idx = 0;
+        while (*str && (parens > 0 || (!isspace((unsigned char)*str) && *str != ','))) {
+            if (*str == '(') parens++;
+            if (*str == ')') parens--;
+            if (idx < 127) args[*arg_count][idx++] = *str;
+            str++;
         }
-        str++;
+        args[*arg_count][idx] = '\0'; (*arg_count)++;
     }
-    if (current_buf < 5) buffers[current_buf][idx] = '\0';
     return strlen(ins) > 0;
 }
 
-// ==========================================
-// MATH & SYMBOLS
-// ==========================================
 void init_assembler_total() {
     memset(&as_state, 0, sizeof(Assembler));
-    as_state.origin = 0x80000000; // Default for QEMU Virt
+    as_state.origin = 0x80000000;
     symbol_count = 0;
 }
 
 void init_assembler_pass() {
-    current_line = 0;
-    as_state.size = 0; 
+    current_line = 0; as_state.size = 0;
     as_state.current_section = SECTION_TEXT;
     anon_count = 0;
 }
@@ -137,233 +97,141 @@ void add_symbol(const char* name, uint32_t offset) {
     if (symbol_count >= MAX_SYMBOLS) return;
     char full_name[128];
     if (strcmp(name, "@@") == 0) {
-        if (anon_count < MAX_SYMBOLS) {
-            anon_labels[anon_count++] = as_state.origin + offset;
-        }
-        return; // Don't add "@@" to the main symbol table
+        if (anon_count < MAX_SYMBOLS) anon_labels[anon_count++] = as_state.origin + offset;
+        return;
     }
-
-    bool is_macro_label = (name[0] == '.' && (strchr(name, '_') != NULL || isdigit(name[1])));
-    if (is_macro_label) {
-        strncpy(full_name, name, 127); 
-    } 
-    else if (name[0] == '.') {
-        snprintf(full_name, sizeof(full_name), "%s%s", current_parent, name);
-    } else {
-        strncpy(current_parent, name, 63);
-        strncpy(full_name, name, 127);
-    }
-    
+    if (name[0] == '.') snprintf(full_name, 128, "%s%s", current_parent, name);
+    else { strncpy(current_parent, name, 63); strcpy(full_name, name); }
     strcpy(symbol_table[symbol_count].name, full_name);
     symbol_table[symbol_count].address = as_state.origin + offset;
     symbol_count++;
 }
 
 int find_symbol(const char *name) {
-    for (int i = 0; i < symbol_count; i++) {
-        if (strcmp(symbol_table[i].name, name) == 0) return symbol_table[i].address;
-    }
+    for (int i = 0; i < symbol_count; i++) 
+        if (strcmp(symbol_table[i].name, name) == 0) return (int)symbol_table[i].address;
     if (name[0] == '.') {
-        char full[128];
-        snprintf(full, 128, "%s%s", current_parent, name);
-        for (int i = 0; i < symbol_count; i++) {
-            if (strcmp(symbol_table[i].name, full) == 0) return symbol_table[i].address;
-        }
+        char full[128]; snprintf(full, 128, "%s%s", current_parent, name);
+        for (int i = 0; i < symbol_count; i++) 
+            if (strcmp(symbol_table[i].name, full) == 0) return (int)symbol_table[i].address;
     }
-    return -1; 
+    return -1;
 }
 
 void add_or_update_variable(const char* name, int value) {
     for (int i = 0; i < symbol_count; i++) {
         if (strcmp(symbol_table[i].name, name) == 0) {
-            symbol_table[i].address = value; 
-            return;
+            symbol_table[i].address = value; return;
         }
     }
-    if (symbol_count >= MAX_SYMBOLS) return;
-
     strncpy(symbol_table[symbol_count].name, name, 127);
-    symbol_table[symbol_count].name[127] = '\0';
-    symbol_table[symbol_count].address = value; 
-    symbol_count++;
+    symbol_table[symbol_count++].address = value;
 }
 
 bool parse_arg(const char *arg, int *out_val) {
-    if (!arg || *arg == '\0') return false;
-    while (isspace((unsigned char)*arg)) arg++;
+    if (!arg || !*arg) return false;
+    char buffer[128]; strncpy(buffer, arg, 127); buffer[127] = '\0';
+    char *ptr = trim_whitespace(buffer);
 
-    if (arg[0] == 'x' && isdigit(arg[1])) { 
-        int n = atoi(arg + 1);
-        if (n > 31) return false; 
-        *out_val = n; 
-        return true; 
+    // Strict Bounds Checking for Registers
+    if (ptr[0] == 'x' && isdigit(ptr[1])) { 
+        int n = atoi(ptr+1); 
+        if (n > 31) return false; // Max x31
+        *out_val = n; return true; 
     }
-
-    if (!strcmp(arg, "zero")) { *out_val = 0; return true; }
-    if (!strcmp(arg, "ra"))   { *out_val = 1; return true; }
-    if (!strcmp(arg, "sp"))   { *out_val = 2; return true; }
-    if (!strcmp(arg, "gp"))   { *out_val = 3; return true; }
-    if (!strcmp(arg, "tp"))   { *out_val = 4; return true; }
-    if (!strcmp(arg, "fp"))   { *out_val = 8; return true; }
-
-    if (arg[0] == 't' && isdigit(arg[1])) {
-        int n = atoi(arg + 1);
-        if (n > 6) return false;
-        *out_val = (n <= 2) ? (n + 5) : (n + 25);
-        return true;
-    }
-
-    if (arg[0] == 's' && isdigit(arg[1])) {
-        int n = atoi(arg + 1);
-        if (n > 11) return false; 
-        if (n == 0) *out_val = 8;
-        else if (n == 1) *out_val = 9;
-        else *out_val = n + 16;
-        return true;
-    }
-
-    if (arg[0] == 'a' && isdigit(arg[1])) {
-        int n = atoi(arg + 1);
-        if (n > 7) return false; 
-        *out_val = n + 10;
-        return true;
-    }
-
-    if (isdigit(*arg) || (*arg == '-' && isdigit(*(arg + 1)))) {
-        *out_val = (int)strtol(arg, NULL, 0);
-        return true;
-    }
+    if (!strcmp(ptr, "zero")) { *out_val = 0; return true; }
+    if (!strcmp(ptr, "ra"))   { *out_val = 1; return true; }
+    if (!strcmp(ptr, "sp"))   { *out_val = 2; return true; }
+    if (!strcmp(ptr, "gp"))   { *out_val = 3; return true; }
+    if (!strcmp(ptr, "tp"))   { *out_val = 4; return true; }
+    if (!strcmp(ptr, "fp") || !strcmp(ptr, "s0")) { *out_val = 8; return true; }
+    if (!strcmp(ptr, "s1"))   { *out_val = 9; return true; }
     
+    if (ptr[0] == 't' && isdigit(ptr[1])) {
+        int n = atoi(ptr+1);
+        if (n > 6) return false; // Max t6
+        *out_val = (n <= 2) ? (n + 5) : (n + 25); return true;
+    }
+    if (ptr[0] == 's' && isdigit(ptr[1])) {
+        int n = atoi(ptr+1);
+        if (n > 11) return false; // Max s11
+        *out_val = (n == 0) ? 8 : (n == 1 ? 9 : n + 16); return true;
+    }
+    if (ptr[0] == 'a' && isdigit(ptr[1])) {
+        int n = atoi(ptr+1);
+        if (n > 7) return false; // Max a7
+        *out_val = n + 10; return true;
+    }
+
+    // Number Parsing (Handles hex properly)
+    char *endptr;
+    long val = strtol(ptr, &endptr, 0);
+    if (endptr != ptr && *endptr == '\0') {
+        *out_val = (int)val; return true;
+    }
     return false;
 }
-
 int resolve_val(const char* name, uint32_t current_offset, bool is_relative) {
-uint32_t absolute_pc = as_state.origin + current_offset;
-
-    // Handle Anonymous Jumps
-    if (strcmp(name, "@f") == 0 || strcmp(name, "@b") == 0) {
-    int target = -1;
-    // Use the "frozen" list from Pass 1
-    if (name[1] == 'f') { 
-        for (int i = 0; i < pass1_anon_count; i++) {
-            if (pass1_anon_labels[i] > absolute_pc) {
-                target = pass1_anon_labels[i];
-                break;
-            }
+    uint32_t absolute_pc = as_state.origin + current_offset;
+    
+    // Handle Anonymous Jumps (@f, @b)
+    if (name[0] == '@') {
+        int target = -1;
+        if (name[1] == 'f') {
+            for(int i=0; i<pass1_anon_count; i++) if(pass1_anon_labels[i] > absolute_pc) { target = pass1_anon_labels[i]; break; }
+        } else {
+            for(int i=pass1_anon_count-1; i>=0; i--) if(pass1_anon_labels[i] < absolute_pc) { target = pass1_anon_labels[i]; break; }
         }
-    } else {
-        for (int i = pass1_anon_count - 1; i >= 0; i--) {
-            if (pass1_anon_labels[i] < absolute_pc) {
-                target = pass1_anon_labels[i];
-                break;
-            }
-        }
-    }
-
-        if (target != -1) {
-            return is_relative ? (target - absolute_pc) : target;
-        }
-        if (current_pass == 2) panic("Anonymous label target not found for %s", name);
+        if (target != -1) return is_relative ? (int)((int64_t)target - (int64_t)absolute_pc) : target;
         return 0;
     }
 
+    // Handle Program Counter ($) and Section Base ($$)
     if (strcmp(name, "$") == 0) {
-        int current_addr = as_state.origin + current_offset;
-        return is_relative ? 0 : current_addr;
+        return is_relative ? 0 : (int)absolute_pc;
     }
     if (strcmp(name, "$$") == 0) {
-        int section_base = as_state.origin;
-        return is_relative ? (int)(section_base - (as_state.origin + current_offset)) : section_base;
+        return is_relative ? (int)(as_state.origin - absolute_pc) : (int)as_state.origin;
     }
 
-    int val;
-    if (parse_arg(name, &val)) return val; 
-
-    int target_addr = find_symbol(name);
-    if (target_addr != -1) {
-        if (is_relative) {
-            uint32_t absolute_pc = as_state.origin + current_offset;
-            return (int32_t)target_addr - (int32_t)absolute_pc;
-        }
-        return target_addr; 
-    }
-
-    if (current_pass == 2) {
-        panic("Undefined symbol: '%s'", name);
-    }
-
-    return 0; 
+    // Handle Immediates and Registers
+    int val; 
+    if (parse_arg(name, &val)) return val;
+    
+    // Handle Labels and Variables
+    int addr = find_symbol(name);
+    if (addr != -1) return is_relative ? (addr - (int32_t)absolute_pc) : addr;
+    
+    if (current_pass == 2) panic("Undefined symbol: '%s'", name);
+    return 0;
 }
-
 int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
-    char buffer[128];
-    strncpy(buffer, expr, 127);
-    char *str = trim_whitespace(buffer); 
-
-    if (!*str) return 0;
-
-    int parens = 0;
-    int split_idx = -1;
-    // We start with a high number so we can find the "lowest" precedence operator.
-    int lowest_prec = 999; 
-
+    char buffer[128]; strncpy(buffer, expr, 127); buffer[127] = '\0';
+    char *str = trim_whitespace(buffer); if (!*str) return 0;
+    
+    int parens = 0, split_idx = -1, lowest_prec = 999; 
     for (int i = 0; str[i]; i++) {
         if (str[i] == '(') parens++;
         else if (str[i] == ')') parens--;
         else if (parens == 0) {
             int prec = 999;
-
-            // --- Precedence Table (Lowest Number = Split First) ---
-            // 1. Bitwise OR (|)
-            // 2. Bitwise XOR (^)
-            // 3. Bitwise AND (&)
-            // 4. Shifts (<<, >>)
-            // 5. Add/Sub (+, -)
-            // 6. Mul/Div (*, /)
-            
-
             if (str[i] == '<' && str[i+1] == '<') prec = 4;
             else if (str[i] == '>' && str[i+1] == '>') prec = 4;
-            
             else if (str[i] == '|') prec = 1;
             else if (str[i] == '^') prec = 2;
             else if (str[i] == '&') prec = 3;
             else if (str[i] == '+' || str[i] == '-') prec = 5;
             else if (str[i] == '*' || str[i] == '/') prec = 6;
-            
-
-            if (prec <= lowest_prec && prec < 999) {
-                lowest_prec = prec;
-                split_idx = i;
-            }
+            if (prec <= lowest_prec && prec < 999) { lowest_prec = prec; split_idx = i; }
         }
     }
-
     if (split_idx != -1) {
-
-        int op_len = 1;
-        char op_char = str[split_idx];
-        
-
-        if ((op_char == '<' && str[split_idx+1] == '<') || 
-            (op_char == '>' && str[split_idx+1] == '>')) {
-            op_len = 2;
-        }
-
-        str[split_idx] = '\0'; 
-        
-
+        int op_len = (str[split_idx] == '<' || str[split_idx] == '>') ? 2 : 1;
+        char op_char = str[split_idx]; str[split_idx] = '\0';
         int left = eval_math(str, current_offset, false);
         int right = eval_math(str + split_idx + op_len, current_offset, false);
-
         int result = 0;
-        
-
-        if (op_len == 2) {
-             if (op_char == '<') result = left << right;
-             else result = left >> right;
-        } 
-
+        if (op_len == 2) { if (op_char == '<') result = left << right; else result = left >> right; }
         else {
             switch (op_char) {
                 case '|': result = left | right; break;
@@ -375,54 +243,21 @@ int eval_math(char *expr, uint32_t current_offset, bool is_relative) {
                 case '/': result = (right != 0) ? (left / right) : 0; break;
             }
         }
-
-        if (is_relative) {
-            return result - (as_state.origin + current_offset);
-        }
-        return result;
+        return is_relative ? (int)(result - (int32_t)(as_state.origin + current_offset)) : result;
     }
-
-
-    if (str[0] == '(' && str[strlen(str)-1] == ')') {
-        str[strlen(str)-1] = '\0'; 
-        return eval_math(str + 1, current_offset, is_relative); 
-    }
-
-
+    if (str[0] == '(' && str[strlen(str)-1] == ')') { str[strlen(str)-1] = '\0'; return eval_math(str + 1, current_offset, is_relative); }
     return resolve_val(str, current_offset, is_relative);
 }
 
 // ==========================================
 // ENCODING
 // ==========================================
-uint32_t encode_R_type(int op, int f3, int f7, int rs1, int rs2, int rd) {
-    return (op & 0x7F) | ((rd & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | ((f7 & 0x7F) << 25);
-}
-uint32_t encode_I_type(int op, int f3, int imm, int rs1, int rd) {
-    return (op & 0x7F) | ((rd & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((imm & 0xFFF) << 20);
-}
-uint32_t encode_U_type(int op, int rd, int imm) {
-    return (op & 0x7F) | ((rd & 0x1F) << 7) | (imm & 0xFFFFF000);
-}
-uint32_t encode_S_type(int op, int f3, int rs2, int imm, int rs1) {
-    return (op & 0x7F) | ((imm & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | (((imm >> 5) & 0x7F) << 25);
-}
-uint32_t encode_B_type(int op, int f3, int rs1, int rs2, int imm) {
-    uint32_t u = (uint32_t)imm;
-    uint32_t b12 = (u >> 12) & 0x1;
-    uint32_t b11 = (u >> 11) & 0x1;
-    uint32_t b10_5 = (u >> 5) & 0x3F;
-    uint32_t b4_1 = (u >> 1) & 0xF;
-    return (op & 0x7F) | (b11 << 7) | (b4_1 << 8) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | (b10_5 << 25) | (b12 << 31);
-}
-uint32_t encode_J_type(int op, int rd, int imm) {
-    uint32_t u = (uint32_t)imm;
-    uint32_t b20 = (u >> 20) & 0x1;
-    uint32_t b10_1 = (u >> 1) & 0x3FF;
-    uint32_t b11 = (u >> 11) & 0x1;
-    uint32_t b19_12 = (u >> 12) & 0xFF;
-    return (op & 0x7F) | ((rd & 0x1F) << 7) | (b19_12 << 12) | (b11 << 20) | (b10_1 << 21) | (b20 << 31);
-}
+uint32_t encode_R_type(int op, int f3, int f7, int rs1, int rs2, int rd) { return (op & 0x7F) | ((rd & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | ((f7 & 0x7F) << 25); }
+uint32_t encode_I_type(int op, int f3, int imm, int rs1, int rd) { return (op & 0x7F) | ((rd & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((imm & 0xFFF) << 20); }
+uint32_t encode_U_type(int op, int rd, int imm) { return (op & 0x7F) | ((rd & 0x1F) << 7) | (imm & 0xFFFFF000); }
+uint32_t encode_S_type(int op, int f3, int rs2, int imm, int rs1) { return (op & 0x7F) | ((imm & 0x1F) << 7) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | (((imm >> 5) & 0x7F) << 25); }
+uint32_t encode_B_type(int op, int f3, int rs1, int rs2, int imm) { uint32_t u = (uint32_t)imm; return (op & 0x7F) | (((u >> 11) & 0x1) << 7) | (((u >> 1) & 0xF) << 8) | ((f3 & 0x7) << 12) | ((rs1 & 0x1F) << 15) | ((rs2 & 0x1F) << 20) | (((u >> 5) & 0x3F) << 25) | (((u >> 12) & 0x1) << 31); }
+uint32_t encode_J_type(int op, int rd, int imm) { uint32_t u = (uint32_t)imm; return (op & 0x7F) | ((rd & 0x1F) << 7) | (((u >> 12) & 0xFF) << 12) | (((u >> 11) & 0x1) << 20) | (((u >> 1) & 0x3FF) << 21) | (((u >> 20) & 0x1) << 31); }
 
 uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "add"))  return encode_R_type(0x33, 0x0, 0x00, a2, a3, a1);
@@ -461,7 +296,6 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
     if (!strcmp(name, "csrrw")) return encode_I_type(0x73, 0x1, a2, a3, a1); 
     if (!strcmp(name, "csrrs")) return encode_I_type(0x73, 0x2, a2, a3, a1); 
     if (!strcmp(name, "csrrc")) return encode_I_type(0x73, 0x3, a2, a3, a1); 
-
     if (!strcmp(name, "csrr")) return encode_I_type(0x73, 0x2, a2, 0, a1); 
     if (!strcmp(name, "csrw")) return encode_I_type(0x73, 0x1, a1, a2, 0);
     if (!strcmp(name, "csrc")) return encode_I_type(0x73, 0x3, a1, a2, 0); 
@@ -496,7 +330,7 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
 
     if (!strcmp(name, "li"))   return encode_I_type(0x13, 0x0, a2, 0, a1);
     if (!strcmp(name, "mv"))   return encode_I_type(0x13, 0x0, 0, a2, a1);
-    if (!strcmp(name, "j"))    return encode_J_type(0x6F, 0, a2);
+    if (!strcmp(name, "j"))    return encode_J_type(0x6F, 0, a2); // Notice it is a2 for target
     if (!strcmp(name, "ret"))  return encode_I_type(0x67, 0x0, 0, 1, 0);
     if (!strcmp(name, "nop"))  return encode_I_type(0x13, 0x0, 0, 0, 0);
     
@@ -510,84 +344,107 @@ uint32_t encode_instruction(char* name, int a1, int a2, int a3) {
 // ==========================================
 // DIRECTIVES & INSTRUCTION PROCESSING
 // ==========================================
-
-void handle_directive(char *directive, char *args, bool write_mode) {
-    char *comment = strpbrk(args, ";#"); 
-    if (comment) *comment = '\0';
-
+void handle_directive(char *directive, char *args_str, char args[MAX_ARGS][128], int arg_count, bool write_mode) {
     if (!strcmp(directive, ".include")) {
-        // Usage: .include "macros.s"
-        char *start = strchr(args, '\"');
-        char *end = strrchr(args, '\"');
-        char filename[128];
-
-        if (start && end && start != end) {
-            *end = '\0';
-            strcpy(filename, start + 1);
-        } else {
-            sscanf(args, " %s", filename);
-        }
-
+        char filename[128]; sscanf(args_str, " \"%[^\"]\"", filename);
         FILE *inc_fp = fopen(filename, "r");
         if (inc_fp) {
-            // --- CONTEXT SWITCH (SAVE) ---
-            const char *saved_file = current_file;
-            int saved_line = current_line;
-            // -----------------------------
-
+            const char *saved_file = current_file; int saved_line = current_line;
             process_pass(inc_fp, write_mode, filename);
-            fclose(inc_fp);
-
-            // --- CONTEXT SWITCH (RESTORE) ---
-            current_file = saved_file;
-            current_line = saved_line;
-            // --------------------------------
-        } else {
-            panic("Include file not found: %s", filename);
+            fclose(inc_fp); current_file = saved_file; current_line = saved_line;
         }
     }
-        else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
-        // Usage: .equ NAME, VALUE
-        char name[64];
-
-        char *ptr = args;
-        while (isspace((unsigned char)*ptr)) ptr++;
-        
-        int i = 0;
-        while (*ptr && !isspace((unsigned char)*ptr) && *ptr != ',' && i < 63) {
-            name[i++] = *ptr++;
-        }
-        name[i] = '\0';
-
-        while (*ptr && (isspace((unsigned char)*ptr) || *ptr == ',')) {
-            ptr++;
-        }
-
-        if (i > 0 && *ptr) {
-            int val = eval_math(ptr, as_state.size, false);
-            add_or_update_variable(name, val);
+    else if (!strcmp(directive, ".equ") || !strcmp(directive, ".set")) {
+        // Find the comma and evaluate the entire raw string after it
+        char *comma = strchr(args_str, ',');
+        if (comma) {
+            int val = eval_math(comma + 1, as_state.size, false);
+            add_or_update_variable(args[0], val);
+        } else if (arg_count >= 2) {
+            // Fallback for space-separated ".equ NAME VALUE"
+            int val = eval_math(args[1], as_state.size, false);
+            add_or_update_variable(args[0], val);
         }
     }
     else if (!strcmp(directive, ".text")) as_state.current_section = SECTION_TEXT;
     else if (!strcmp(directive, ".data")) as_state.current_section = SECTION_DATA;
     else if (!strcmp(directive, ".org")) {
-        as_state.origin = (uint32_t)strtol(args, NULL, 0);
+        if (arg_count > 0) as_state.origin = (uint32_t)eval_math(args[0], as_state.size, false);
     }
     else if (!strcmp(directive, ".word")) {
-        while ((as_state.origin + as_state.size) % 4 != 0) as_state.size++;
-        if (write_mode) {
-            uint32_t val = (uint32_t)eval_math(args, as_state.size, false);
-            memcpy(&as_state.image[as_state.size], &val, 4);
+        for (int i = 0; i < arg_count; i++) {
+            while ((as_state.origin + as_state.size) % 4 != 0) as_state.size++;
+            if (write_mode) {
+                uint32_t val = (uint32_t)eval_math(args[i], as_state.size, false);
+                memcpy(&as_state.image[as_state.size], &val, 4);
+            }
+            as_state.size += 4;
         }
-        as_state.size += 4;
+    }
+    else if (!strcmp(directive, ".half") || !strcmp(directive, ".short")) {
+        for (int i = 0; i < arg_count; i++) {
+            while ((as_state.origin + as_state.size) % 2 != 0) as_state.size++;
+            if (write_mode) {
+                uint16_t val = (uint16_t)eval_math(args[i], as_state.size, false);
+                memcpy(&as_state.image[as_state.size], &val, 2);
+            }
+            as_state.size += 2;
+        }
+    }
+    else if (!strcmp(directive, ".byte")) {
+        // We evaluate the raw args_str because variadic %* dumps a single string 
+        // with commas directly into the argument string.
+        char *ptr = args_str;
+        while (*ptr) {
+            while (isspace((unsigned char)*ptr)) ptr++;
+            if (!*ptr) break; 
+            char *end = ptr;
+            while (*end && !isspace((unsigned char)*end) && *end != ',') end++;
+            char expr[128]; int len = end - ptr; if (len > 127) len = 127;
+            strncpy(expr, ptr, len); expr[len] = '\0';
+            
+            uint8_t val = (uint8_t)eval_math(expr, as_state.size, false);
+            if (write_mode) as_state.image[as_state.size] = val;
+            as_state.size += 1; 
+            
+            ptr = end;
+            while (*ptr == ',' || isspace((unsigned char)*ptr)) ptr++;
+        }
+    }
+    else if (!strcmp(directive, ".fill")) {
+        int repeat = (arg_count > 0) ? eval_math(args[0], as_state.size, false) : 0;
+        int size   = (arg_count > 1) ? eval_math(args[1], as_state.size, false) : 1;
+        int value  = (arg_count > 2) ? eval_math(args[2], as_state.size, false) : 0;
+        for (int i = 0; i < repeat; i++) {
+            if (write_mode) {
+                uint32_t val = value;
+                memcpy(&as_state.image[as_state.size], &val, size);
+            }
+            as_state.size += size;
+        }
+    }
+    else if (!strcmp(directive, ".space")) {
+        int num_bytes = (arg_count > 0) ? eval_math(args[0], as_state.size, false) : 0;
+        for (int i = 0; i < num_bytes; i++) {
+            if (write_mode) { as_state.image[as_state.size] = 0; }
+            as_state.size++;
+        }
+    }
+    else if (!strcmp(directive, ".align")) {
+        int align_val = (arg_count > 0) ? eval_math(args[0], as_state.size, false) : 4;
+        if (align_val <= 0) align_val = 4;
+        while ((as_state.origin + as_state.size) % align_val != 0) {
+            if (write_mode) { as_state.image[as_state.size] = 0; }
+            as_state.size++;
+        }
     }
     else if (!strcmp(directive, ".asciz")) {
-        char *start = strchr(args, '\"'), *end = strrchr(args, '\"');
+        char *start = strchr(args_str, '\"'), *end = strrchr(args_str, '\"');
         if (start && end && start != end) {
             for (char *p = start + 1; p < end; p++) {
                 if (*p == '\\' && *(p+1) == 'n') {
-                    if (write_mode) as_state.image[as_state.size] = 0x0A; 
-                    p++; 
+                    if (write_mode) as_state.image[as_state.size] = 0x0A;
+                    p++;
                 } else {
                     if (write_mode) as_state.image[as_state.size] = *p;
                 }
@@ -597,247 +454,114 @@ void handle_directive(char *directive, char *args, bool write_mode) {
             as_state.size++;
         }
     }
-    else if (!strcmp(directive, ".align")) {
-        int align_val = eval_math(args, as_state.size, false);
-        if (align_val <= 0) align_val = 4; 
-        while ((as_state.origin + as_state.size) % align_val != 0) {
-            if (write_mode) as_state.image[as_state.size] = 0; 
-            as_state.size++;
-        }
-    }
-    else if (!strcmp(directive, ".byte")) {
-        char *ptr = args;
-        while (*ptr) {
-            while (isspace((unsigned char)*ptr)) ptr++;
-            if (!*ptr) break;
-            char *end = ptr;
-            while (*end && !isspace((unsigned char)*end)) end++;
-            char expr[128];
-            int len = end - ptr; if (len > 127) len = 127;
-            strncpy(expr, ptr, len); expr[len] = '\0';
-            uint8_t val = (uint8_t)eval_math(expr, as_state.size, false);
-            if (write_mode) as_state.image[as_state.size] = val;
-            as_state.size += 1;
-            ptr = end;
-        }
-    }
-    else if (!strcmp(directive, ".half") || !strcmp(directive, ".short")) {
-        char *ptr = args;
-        while (*ptr) {
-            
-            while (*ptr && (isspace((unsigned char)*ptr) || *ptr == ',')) ptr++;
-            if (!*ptr) break;
-
-           
-            char *end = ptr;
-            while (*end && *end != ',' && !isspace((unsigned char)*end)) end++;
-
-          
-            char expr[128];
-            int len = end - ptr; 
-            if (len > 127) len = 127;
-            strncpy(expr, ptr, len); 
-            expr[len] = '\0';
-
-         
-            uint16_t val = (uint16_t)eval_math(expr, as_state.size, false);
-            
-            if (write_mode) {
-                as_state.image[as_state.size]     = val & 0xFF;        // Low Byte
-                as_state.image[as_state.size + 1] = (val >> 8) & 0xFF; // High Byte
-            }
-            
-            as_state.size += 2; // Step forward 2 bytes
-            ptr = end;
-        }
-    }
-    else if (!strcmp(directive, ".space")) {
-        int num_bytes = eval_math(args, as_state.size, false);
-        for (int i = 0; i < num_bytes; i++) {
-            if (write_mode) as_state.image[as_state.size] = 0;
-            as_state.size++;
-        }
-    }
 }
-
-
 void process_pass(FILE *fp, bool write_mode, const char* filename) {
-    current_pass = write_mode ? 2 : 1;
-    current_file = filename;
-    current_line = 0;
-
-    char line[MAX_LINE_LEN];
-    rewind(fp);
-
-    unique_id_counter = 0;
-    stack_ptr = -1;
-    defining_macro = false;
-
+    current_pass = write_mode ? 2 : 1; current_file = filename; current_line = 0;
+    char line[MAX_LINE_LEN]; rewind(fp);
+    defining_macro = false; unique_id_counter = 0; anon_count = 0;
     while (fgets(line, sizeof(line), fp)) {
-        current_line++;
-        line[strcspn(line, "\r\n")] = '\0';
-        
-        char work[MAX_LINE_LEN];
-        strcpy(work, line);
-        simplify_punct(work);
-        
-        if (work[0] == '\0' || work[0] == ';' || work[0] == '#') continue;
-
-        char ins[32], a1[32], a2[32], a3[32], a4[32];
-        if (!split_line(work, ins, a1, a2, a3, a4)) continue;
-        
-        if (!strcmp(ins, "macro")) {
-            if (macro_lib_count >= MAX_MACROS) {
-                panic("Too many macros! Increase MAX_MACROS in your header.");
-                return;
-            }
-            defining_macro = true;
-            strcpy(macro_lib[macro_lib_count].name, a1);
-            macro_lib[macro_lib_count].line_count = 0;
-            continue;
-        }
-        if (!strcmp(ins, "endm")) {
-            defining_macro = false;
-            macro_lib_count++;
-            continue;
-        }
-        if (defining_macro) {
-            strcpy(macro_lib[macro_lib_count].lines[macro_lib[macro_lib_count].line_count++], line);
-            continue;
-        }
-
-        if (stack_ptr >= 0) {
-            int current_id = peek_id();
-            substitute_args_with_id(line, "", "", "", "", current_id);
-        }
-
+        current_line++; line[strcspn(line, "\r\n")] = '\0';
         process_line(line, write_mode);
     }
+    if (!write_mode) { memcpy(pass1_anon_labels, anon_labels, sizeof(anon_labels)); pass1_anon_count = anon_count; }
 }
 
 void process_line(char *line, bool write_mode) {
-//if (current_pass == 2) printf("DEBUG Pass 2: %s\n", line);
-    char work[MAX_LINE_LEN]; 
-    strcpy(work, line); 
-
-    // 1. Handle Context/Scope (%u Substitution)
-    // If we are inside a scoped block (like a loop macro), substitute %u first.
-    if (stack_ptr >= 0) {
-        int current_id = peek_id();
-        substitute_args_with_id(work, "", "", "", "", current_id);
+// 1. Intelligent Comment Stripping (Protects %# variadic arg)
+    bool in_string = false;
+    for (int i = 0; line[i]; i++) {
+        if (line[i] == '"') in_string = !in_string;
+        if (!in_string && line[i] == ';') { line[i] = '\0'; break; }
+        if (!in_string && line[i] == '#') {
+            // Only strip if it's NOT part of the '%#' variadic symbol
+            if (i == 0 || line[i-1] != '%') {
+                line[i] = '\0'; 
+                break;
+            }
+        }
     }
+    char work[MAX_LINE_LEN]; strcpy(work, line); simplify_punct(work);
+    char ins[64], args[MAX_ARGS][128]; int arg_count = 0;
+    if (!split_line(work, ins, args, &arg_count)) return;
 
-    simplify_punct(work);
-    
-    if (work[0] == '\0' || work[0] == ';' || work[0] == '#') return;
+    if (!strcmp(ins, "macro")) {
+        defining_macro = true; strcpy(macro_lib[macro_lib_count].name, args[0]);
+        macro_lib[macro_lib_count].line_count = 0; return;
+    }
+    if (!strcmp(ins, "endm")) { defining_macro = false; macro_lib_count++; return; }
+    if (defining_macro) { strcpy(macro_lib[macro_lib_count].lines[macro_lib[macro_lib_count].line_count++], line); return; }
 
-    char ins[64], a1[128], a2[128], a3[128], a4[128];
-    if (!split_line(work, ins, a1, a2, a3, a4)) return;
-
-    // ==================================================
-    // 3. RECURSIVE MACRO EXPANSION
-    // ==================================================
+    // ==========================================
+    // MACRO EXPANSION (With Stack Fix)
+    // ==========================================
     int m_idx = find_macro(ins);
     if (m_idx != -1) {
         int current_id;
         
-        // Handle Block Logic (endfor / endloop)
+        // Handle Block Logic (endfor / endloop / endif)
         if (strncmp(ins, "end", 3) == 0) {
-            current_id = pop_id(ins + 3); // e.g. "endloop" -> pops "loop"
+            current_id = pop_id(ins + 3); // e.g. "endif" -> pops "if" ID
         } else {
             // New Block Start
             current_id = ++unique_id_counter;
             char end_search[128];
             snprintf(end_search, sizeof(end_search), "end%s", ins);
-            // If there is a matching "endX" macro, push scope
-            if (find_macro(end_search) != -1) push_id(current_id, ins);
+            // If there is a matching "endX" macro, push scope to stack
+            if (find_macro(end_search) != -1) {
+                push_id(current_id, ins);
+            }
         }
 
-        // Expand and Recurse
         for (int i = 0; i < macro_lib[m_idx].line_count; i++) {
-            char expanded[MAX_LINE_LEN];
-            strcpy(expanded, macro_lib[m_idx].lines[i]);
-            
-            // Substitute Arguments (%1..%4) and Unique ID (%u)
-            substitute_args_with_id(expanded, a1, a2, a3, a4, current_id);
-            
-            process_line(expanded, write_mode); 
+            char expanded[MAX_LINE_LEN]; strcpy(expanded, macro_lib[m_idx].lines[i]);
+            substitute_args_with_id(expanded, args, arg_count, current_id);
+            process_line(expanded, write_mode);
         }
+        return;
+    }
+
+    if (ins[strlen(ins)-1] == ':') {
+        ins[strlen(ins)-1] = '\0';
+        if (current_pass == 1) add_symbol(ins, as_state.size);
+        if (ins[0] != '.') strncpy(current_parent, ins, 63);
+        if (arg_count == 0) return;
+        strcpy(ins, args[0]);
+        for(int i=0; i<arg_count-1; i++) strcpy(args[i], args[i+1]);
+        arg_count--;
+    }
+
+if (ins[0] == '.') { 
+        char *ptr = strstr(line, ins) + strlen(ins); 
+        handle_directive(ins, ptr, args, arg_count, write_mode); 
         return; 
     }
-
+// ==================================================
+    // VARIABLE HANDLING (e.g. OFFSET = 2)
     // ==================================================
-    // 4. LABELS, VARIABLES, DIRECTIVES
-    // ==================================================
-    uint32_t current_offset = as_state.size;
-
-    // Handle Labels (ending in :)
-    // ==================================================
-    // 4. LABELS & SYMBOLS
-    // ==================================================
-    if (ins[strlen(ins)-1] == ':') {
-        ins[strlen(ins)-1] = '\0'; // Strip the colon
-
-        // Case A: Anonymous Label
-        if (strcmp(ins, "@@") == 0) {
-            if (current_pass == 1) { 
-                if (anon_count < MAX_SYMBOLS) {
-                    anon_labels[anon_count++] = as_state.origin + as_state.size;
-                }
-            }
-        } 
-        // Case B: Named Label
-        else {
-            if (current_pass == 1) {
-                add_symbol(ins, as_state.size);
-            } else {
-                // In Pass 2, just update the parent scope for local labels
-                if (ins[0] != '.') strncpy(current_parent, ins, 63);
-            }
-        }
-        
-        // If the line is JUST a label (no code), exit early
-        if (strlen(a1) == 0) return;
-
-        // Otherwise, shift arguments to process the instruction following the label
-        strcpy(ins, a1); strcpy(a1, a2); strcpy(a2, a3); strcpy(a3, a4);
-    }
-    // Handle Variables (=)
-    if (strcmp(a1, "=") == 0) {
+    if (arg_count > 0 && strcmp(args[0], "=") == 0) {
         char *eq_pos = strchr(work, '='); 
         if (eq_pos) {
             char *math_expr = eq_pos + 1; 
-            char *comment = strpbrk(math_expr, ";#"); if (comment) *comment = '\0';
+            // Remove comments from the math expression
+            char *comment = strpbrk(math_expr, ";#"); 
+            if (comment) *comment = '\0';
+            
+            // Skip leading whitespace
             while (*math_expr == ' ' || *math_expr == '\t') math_expr++;
-            int val = eval_math(math_expr, current_offset, false);
+            
+            // Evaluate and save
+            int val = eval_math(math_expr, as_state.size, false);
             add_or_update_variable(ins, val);
         }
         return; 
     }
- 
-    // Handle Directives (.)
-    if (ins[0] == '.') {
-        // Re-locate arguments in the original string to preserve quotes/spaces
-        char *args_ptr = strstr(line, ins);
-        if (args_ptr) args_ptr += strlen(ins);
-        else args_ptr = "";
-        
-        handle_directive(ins, args_ptr, write_mode);
-        return; 
-    }
-
-    if (as_state.current_section == SECTION_DATA) return;
-
-    // ==================================================
-    // INSTRUCTION ENCODING
-    // ==================================================
     int v1 = 0, v2 = 0, v3 = 0;
 
     // --- Pseudo-Op: LA ---
     if (!strcmp(ins, "la")) {
-        int rd = eval_math(a1, current_offset, false);
+        int rd = eval_math(args[0], as_state.size, false);
         if (write_mode) {
-            int addr = eval_math(a2, current_offset, false);
+            int addr = eval_math(args[1], as_state.size, false);
             uint32_t lower = addr & 0xFFF;
             uint32_t upper = (lower & 0x800) ? ((uint32_t)addr >> 12) + 1 : ((uint32_t)addr >> 12);
             uint32_t lui = encode_U_type(0x37, rd, upper << 12);
@@ -845,30 +569,26 @@ void process_line(char *line, bool write_mode) {
             memcpy(&as_state.image[as_state.size], &lui, 4);
             memcpy(&as_state.image[as_state.size + 4], &addi, 4);
         }
-        as_state.size += 8;
-        return; 
+        as_state.size += 8; return; 
     }
     // --- Pseudo-Op: CALL ---
     else if (!strcmp(ins, "call")) {
-        int offset = eval_math(a1, current_offset, true);
+        int offset = eval_math(args[0], as_state.size, true);
         if (write_mode) {
             uint32_t lower = offset & 0xFFF;
             uint32_t upper = (uint32_t)offset >> 12;
             if (lower & 0x800) upper += 1;
-
-            uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12); // ra = 1
+            uint32_t bin_auipc = encode_U_type(0x17, 1, upper << 12);
             uint32_t bin_jalr = encode_I_type(0x67, 0x0, lower, 1, 1);
             memcpy(&as_state.image[as_state.size], &bin_auipc, 4);
             memcpy(&as_state.image[as_state.size + 4], &bin_jalr, 4);
         }
-        as_state.size += 8; 
-        return; 
+        as_state.size += 8; return; 
     }
-    // --- Pseudo-Op: LI ---
+    // --- Pseudo-Op: LI (Large Imm) ---
     else if (!strcmp(ins, "li")) {
-        int rd = eval_math(a1, current_offset, false);
-        int val = eval_math(a2, current_offset, false); 
-        
+        int rd = eval_math(args[0], as_state.size, false);
+        int val = eval_math(args[1], as_state.size, false); 
         if (val < -2048 || val > 2047) {
             if (write_mode) {
                 uint32_t lower = val & 0xFFF;
@@ -889,79 +609,46 @@ void process_line(char *line, bool write_mode) {
         return;
     } 
     // --- Memory Instructions: 0(sp) ---
-    else if (strchr(a2, '(') && strchr(a2, ')')) {
-        v1 = eval_math(a1, current_offset, false); 
-        char *paren = strchr(a2, '(');
-        *paren = '\0'; 
-        char *reg_end = strchr(paren + 1, ')');
-        if (reg_end) *reg_end = '\0'; 
-
-        int base = eval_math(paren + 1, current_offset, false);
-        int offset = eval_math(a2, current_offset, false);
-
-        v2 = offset;
-        v3 = base;
-        
+    else if (arg_count > 1 && strchr(args[1], '(') && strchr(args[1], ')')) {
+        v1 = eval_math(args[0], as_state.size, false); 
+        char *paren = strchr(args[1], '('); *paren = '\0'; 
+        char *reg_end = strchr(paren + 1, ')'); if (reg_end) *reg_end = '\0'; 
+        v2 = eval_math(args[1], as_state.size, false);
+        v3 = eval_math(paren + 1, as_state.size, false);
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
-        if (bin != 0) {
-            if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4);
-            as_state.size += 4;
-        } else {
-            panic("Invalid memory instruction: %s", ins);
-        }
+        if (bin != 0) { if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4); as_state.size += 4; }
         return;
     }
     // --- Standard Instructions ---
     else {
         if (!strcmp(ins, "j")) {
-            v2 = eval_math(a1, current_offset, true); 
-        } 
-        else if (ins[0] == 'b') { 
-            v1 = eval_math(a1, current_offset, false);
-            if (!strcmp(ins, "beqz") || !strcmp(ins, "bnez")) {
-                v3 = eval_math(a2, current_offset, true);
-            } else {
-                v2 = eval_math(a2, current_offset, false);
-                v3 = eval_math(a3, current_offset, true);
-            }
-        }
-        else if (!strcmp(ins, "jal")) {
-            v1 = eval_math(a1, current_offset, false);
-            v2 = eval_math(a2, current_offset, true);
-        }
-        else {
-            v1 = eval_math(a1, current_offset, false);
-            v2 = eval_math(a2, current_offset, false);
-            v3 = eval_math(a3, current_offset, false);
+            v2 = eval_math(args[0], as_state.size, true); // encode_instruction expects a2
+        } else if (ins[0] == 'b') { 
+            v1 = eval_math(args[0], as_state.size, false);
+            if (!strcmp(ins, "beqz") || !strcmp(ins, "bnez")) { v3 = eval_math(args[1], as_state.size, true); } 
+            else { v2 = eval_math(args[1], as_state.size, false); v3 = eval_math(args[2], as_state.size, true); }
+        } else if (!strcmp(ins, "jal")) {
+            v1 = eval_math(args[0], as_state.size, false);
+            v2 = eval_math(args[1], as_state.size, true);
+        } else {
+            if (arg_count > 0) v1 = eval_math(args[0], as_state.size, false);
+            if (arg_count > 1) v2 = eval_math(args[1], as_state.size, false);
+            if (arg_count > 2) v3 = eval_math(args[2], as_state.size, false);
         }
 
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
-
-        if (bin != 0) {
-            if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4);
-            as_state.size += 4;
-        } 
-        else {
-            panic("Unknown instruction or syntax error: '%s'", ins);
-        }
+        if (bin != 0) { if (write_mode) memcpy(&as_state.image[as_state.size], &bin, 4); as_state.size += 4; } 
     }   
 }
-
-
 void save_binary(const char* filename) {
+    if (!compile) return; // <-- DO NOT save if there are errors
+
     FILE *f = fopen(filename, "wb");
-    if (!f) return;
-    fwrite(as_state.image, 1, as_state.size, f);
-    fclose(f);
-    printf("FASM Binary Saved: %d bytes\n", as_state.size);
+    if (f) { fwrite(as_state.image, 1, as_state.size, f); fclose(f); }
 }
 
 void dump_symbol_table() {
-    printf("\n--- SYMBOL TABLE DUMP ---\n");
-    printf("%-30s | %-10s\n", "Symbol Name", "Address");
-    printf("---------------------------------------------\n");
-    for (int i = 0; i < symbol_count; i++) {
-        printf("%-30s | 0x%08X\n", symbol_table[i].name, symbol_table[i].address);
-    }
-    printf("---------------------------------------------\n\n");
+    if (!compile) return; // <-- DO NOT dump symbols on error
+
+    for (int i = 0; i < symbol_count; i++) printf("%-30s | 0x%08X\n", symbol_table[i].name, symbol_table[i].address);
 }

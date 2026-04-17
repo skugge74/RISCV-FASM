@@ -157,6 +157,6 @@ csrw 0x340, t1       ; Write to mscratch
 ## 📅 TODO
 
 * [ ] Recursive Inclusion
-* [ ] Variadic macro arguments
-* [ ] Anonymous label handling (`@@`, `@f`, `@b`)
+* [x] Variadic macro arguments
+* [x] Anonymous label handling (`@@`, `@f`, `@b`)
 * [ ] Rewrite assembler in itself ?
