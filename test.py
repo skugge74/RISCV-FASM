@@ -107,11 +107,11 @@ def run_elf_test(filename):
     c_file = filename.replace('.s', '.c')
     c_path = os.path.join(ELF_DIR, c_file)
     
-    exit_file = os.path.join(ELF_DIR, filename.replace('.s', '.test'))
-    expected_exit = 100
-    if os.path.exists(exit_file):
-        with open(exit_file, "r") as f:
-            expected_exit = int(f.read().strip())
+    test_file = os.path.join(ELF_DIR, filename.replace('.s', '.test'))
+    expected_content = ""
+    if os.path.exists(test_file):
+        with open(test_file, "r") as f:
+            expected_content = f.read().strip()
 
     try:
         # 1. Assemble
@@ -121,10 +121,9 @@ def run_elf_test(filename):
             print_result(filename, False, f"Assembler Failed:\n{proc.stderr}\n{proc.stdout}")
             return
 
-        # 2. Dynamic Linking (Includes .c file ONLY if it exists)
+        # 2. Link
         link_cmd = ["riscv64-unknown-elf-gcc", "-march=rv32i", "-mabi=ilp32", "-nostdlib"]
-        if os.path.exists(c_path):
-            link_cmd.append(c_file)
+        if os.path.exists(c_path): link_cmd.append(c_file)
         link_cmd.extend([obj_file, "-o", exe_file])
         
         proc = subprocess.run(link_cmd, capture_output=True, text=True, cwd=ELF_DIR)
@@ -132,21 +131,30 @@ def run_elf_test(filename):
             print_result(filename, False, f"GCC Linking Failed:\n{proc.stderr}")
             return
 
-        # 3. Execute
-        run_cmd = ["qemu-riscv32", f"./{exe_file}"]
+        # 3. Execute and Capture Output
+        run_cmd = ["qemu-riscv32", f"./{exe_file}", "hello"]
         proc = subprocess.run(run_cmd, capture_output=True, text=True, cwd=ELF_DIR)
         actual_exit = proc.returncode
+        actual_stdout = normalize_output(proc.stdout.strip())
 
-        # Cleanup Artifacts
-        obj_path = os.path.join(ELF_DIR, obj_file)
-        exe_path = os.path.join(ELF_DIR, exe_file)
-        if os.path.exists(obj_path): os.remove(obj_path)
-        if os.path.exists(exe_path): os.remove(exe_path)
+        # Cleanup
+        for f in [os.path.join(ELF_DIR, obj_file), os.path.join(ELF_DIR, exe_file)]:
+            if os.path.exists(f): os.remove(f)
 
-        if actual_exit == expected_exit:
-            print_result(filename, True, f"(Exit: {actual_exit})")
+        # 4. Evaluation Logic
+        # If expected is a number, check Exit Code. Otherwise, check Stdout.
+        if expected_content.isdigit():
+            expected_exit = int(expected_content)
+            if actual_exit == expected_exit:
+                print_result(filename, True, f"(Exit: {actual_exit})")
+            else:
+                print_result(filename, False, f"Expected Exit: {expected_exit}\nActual Exit: {actual_exit}")
         else:
-            print_result(filename, False, f"Expected Exit: {expected_exit}\nActual Exit: {actual_exit}")
+            expected_stdout = normalize_output(expected_content)
+            if actual_stdout == expected_stdout:
+                print_result(filename, True, "(Stdout Match)")
+            else:
+                print_result(filename, False, f"Expected Stdout:\n{expected_stdout}\n\nActual Stdout:\n{actual_stdout}")
 
     except Exception as e:
         print_result(filename, False, f"Exception: {e}")

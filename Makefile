@@ -43,9 +43,16 @@ all: $(TARGET)
 run: $(TARGET)
 	@if [ -f "$(FILE)" ]; then \
 		echo "--- Assembling ($(FORMAT)) ---"; \
-		./$(TARGET) $(Q_FLAG) -f $(FORMAT) -o $(OUT_FILE) $(FILE) && \
-		echo "--- Running QEMU ---" && \
-		$(QEMU) -M virt -bios none -kernel $(OUT_FILE) -nographic; \
+		./$(TARGET) $(Q_FLAG) -f $(FORMAT) -o $(OUT_FILE) $(FILE) || exit 1; \
+		if [ "$(FORMAT)" = "elf" ]; then \
+			echo "--- Linking ELF with GCC ---"; \
+			riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib $(OUT_FILE) -o $(OUT_FILE).elf || exit 1; \
+			echo "--- Running QEMU ---"; \
+			qemu-riscv32 ./$(OUT_FILE).elf; \
+		else \
+			echo "--- Running QEMU ---"; \
+			$(QEMU) -M virt -bios none -kernel $(OUT_FILE) -nographic; \
+		fi \
 	else \
 		echo "Error: File '$(FILE)' not found."; \
 		exit 1; \
