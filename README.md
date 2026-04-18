@@ -235,3 +235,10 @@ For automation, CI/CD pipelines, or custom Python test suites, use **Quiet Mode*
 * [x] **Recursive Inclusion:** Allow files to include files that include files.
 * [ ] **Self-Hosting:** Rewrite the assembler in Kdex Assembly.
 * [x] **Relocation Math Problem** : Currently, the ELF writer handles simple relocations (like HI20 and LO12_I). But what if an instruction is something like la t0, my_var + 8?
+
+
+Teach parse_arg how to read 'a', '\n', etc.
+
+Add bltz and bgez to our instruction set.
+
+Zero-initialize the args array so we never execute ghost memory again

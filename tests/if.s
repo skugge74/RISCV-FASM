@@ -27,4 +27,4 @@ _start:
 .data
 match_msg: .asciz "Matched!\n"
 no_match_msg: .asciz "Not matched\n"
-success_msg: "succes\n"
+success_msg: .asciz "succes\n"
