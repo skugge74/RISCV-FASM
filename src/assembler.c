@@ -443,16 +443,33 @@ uint32_t encode_instruction(char *name, int a1, int a2, int a3) {
 // ==========================================
 void handle_directive(char *directive, char *args_str, char args[MAX_ARGS][128], int arg_count, bool write_mode) {
     if (!strcmp(directive, ".include")) {
+        static int include_depth = 0;
+        if (include_depth > 20) { 
+            panic("Max include depth exceeded! Circular dependency detected in: %s", args_str); 
+            return; 
+        }
+
         char filename[128]; sscanf(args_str, " \"%[^\"]\"", filename);
         FILE *inc_fp = fopen(filename, "r");
         if (inc_fp) {
-            const char *saved_file = current_file; int saved_line = current_line;
+            include_depth++; // Go one level deeper
+            
+            const char *saved_file = current_file; 
+            int saved_line = current_line;
             char line[MAX_LINE_LEN]; current_file = filename; current_line = 0;
+            
             while (fgets(line, sizeof(line), inc_fp)) {
                 current_line++; line[strcspn(line, "\r\n")] = '\0';
                 process_line(line, write_mode);
             }
-            fclose(inc_fp); current_file = saved_file; current_line = saved_line;
+            
+            fclose(inc_fp); 
+            current_file = saved_file; 
+            current_line = saved_line;
+            
+            include_depth--; // Surface back up
+        } else {
+            panic("Could not open included file: %s", filename);
         }
         return;
     }
