@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
         printf("──────────────────────────────────────────────────────────\n");
         printf("  %-12s %s\n", CLR_BOLD "Output:" CLR_RESET, output_file);
         printf("  %-12s %s\n", CLR_BOLD "Format:" CLR_RESET, output_elf ? "ELF (Relocatable)" : "Flat Binary");
-        printf("  %-12s %d bytes\n", CLR_BOLD "Size:" CLR_RESET, as_state.size);
+printf("  %-12s %d bytes\n", CLR_BOLD "Size:" CLR_RESET, as_state.text_size + as_state.data_size);
         printf("  %-12s %.4fs\n", CLR_BOLD "Time:" CLR_RESET, elapsed);
         printf("──────────────────────────────────────────────────────────\n\n");
     }

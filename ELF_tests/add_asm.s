@@ -1,30 +1,33 @@
 .global _start
 .global shared_var
 .global add_to_shared_var
+.global compute_offset 
 .extern main
 
-# --- WRITABLE DATA SECTION ---
 .data
 .align 4
 shared_var:
-    .word 10    # Initialize the variable to 10
+    .word 10
+    .word 30
 
-# --- READ-ONLY CODE SECTION ---
 .text
 .align 4
-
 _start:
     call main
     li a7, 93
     ecall
 
-# Function: Adds a0 to shared_var and returns the new value
 add_to_shared_var:
-    la t0, shared_var     # Load the address of the variable
-    lw t1, 0(t0)          # Load its current value into t1
-    
-    add t1, t1, a0        # Add the C argument (a0) to the value
-    sw t1, 0(t0)          # Store it back! (WILL SEGFAULT IF IN .TEXT)
-    
-    mv a0, t1             # Move the final value to a0 to return it
+    la t0, shared_var + 4
+    lw t1, 0(t0)
+    add t1, t1, a0
+    sw t1, 0(t0)
+    mv a0, t1
+    ret
+
+# Test: li with expression
+compute_offset:
+    li t0, 4 * 8         # Should encode as li t0, 32
+    li t1, 1 << 3        # Should encode as li t1, 8
+    add a0, t0, t1       # Return 40
     ret

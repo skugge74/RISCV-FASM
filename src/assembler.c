@@ -90,6 +90,45 @@ char *trim_whitespace(char *str) {
     return str;
 }
 
+void strip_spaces(char *str) {
+    char buf[128];
+    int j = 0;
+    for (int i = 0; str[i]; i++)
+        if (!isspace((unsigned char)str[i]))
+            buf[j++] = str[i];
+    buf[j] = '\0';
+    strcpy(str, buf);
+}
+
+// THE FIX: Supercharged expression re-joiner that checks both sides for operators
+void rejoin_split_expressions(char args[MAX_ARGS][128], int *arg_count) {
+    for (int i = 0; i < *arg_count - 1; i++) {
+        char *current = args[i];
+        char *next = args[i + 1];
+        
+        if (strlen(current) == 0 || strlen(next) == 0) continue;
+
+        // Is the current or next token EXACTLY an operator?
+        bool c_is_op = (!strcmp(current, "+") || !strcmp(current, "-") || !strcmp(current, "*") || !strcmp(current, "/") || !strcmp(current, "<<") || !strcmp(current, ">>") || !strcmp(current, "&") || !strcmp(current, "|") || !strcmp(current, "^"));
+        bool n_is_op = (!strcmp(next, "+") || !strcmp(next, "-") || !strcmp(next, "*") || !strcmp(next, "/") || !strcmp(next, "<<") || !strcmp(next, ">>") || !strcmp(next, "&") || !strcmp(next, "|") || !strcmp(next, "^"));
+        
+        // Does the current token END with an operator?
+        char last = current[strlen(current) - 1];
+        bool c_ends_op = (last == '+' || last == '-' || last == '*' || last == '/' || last == '<' || last == '>' || last == '&' || last == '|' || last == '^');
+
+        // If any of these are true, glue them together!
+        if (c_is_op || n_is_op || c_ends_op) {
+            strncat(current, next, 127 - strlen(current));
+            // Shift the remaining arguments down
+            for (int j = i + 1; j < *arg_count - 1; j++) {
+                strcpy(args[j], args[j + 1]);
+            }
+            (*arg_count)--;
+            i--; // Step back to see if we need to merge the newly created token with the next one
+        }
+    }
+}
+
 void simplify_punct(char *str) {
     char buffer[MAX_LINE_LEN * 2];
     int j = 0;
@@ -148,22 +187,17 @@ void init_assembler_pass() {
     unique_id_counter = 0;
 }
 
-void add_relocation(uint32_t offset, const char *name, int type) {
+void add_relocation(uint32_t offset, const char *name, int type, int32_t addend) {
     if (relocation_count >= MAX_RELOCS) return;
     int sym_idx = -1;
     for (int i = 0; i < symbol_count; i++) {
-        if (strcmp(symbol_table[i].name, name) == 0) {
-            sym_idx = i + 1; 
-            break;
-        }
+        if (strcmp(symbol_table[i].name, name) == 0) { sym_idx = i + 1; break; }
     }
-    if (sym_idx == -1) {
-        add_symbol(name, 0xFFFFFFFF);
-        sym_idx = symbol_count;
-    }
+    if (sym_idx == -1) { add_symbol(name, 0xFFFFFFFF); sym_idx = symbol_count; }
+
     relocation_table[relocation_count].r_offset = offset;
     relocation_table[relocation_count].r_info   = ELF32_R_INFO(sym_idx, type);
-    relocation_table[relocation_count].r_addend = 0;
+    relocation_table[relocation_count].r_addend = addend;
     relocation_count++;
 }
 
@@ -636,6 +670,9 @@ void process_line(char *line, bool write_mode) {
     char work[MAX_LINE_LEN]; strcpy(work, line); simplify_punct(work);
     char ins[64], args[MAX_ARGS][128]; int arg_count = 0;
     if (!split_line(work, ins, args, &arg_count)) return;
+    
+    // Supercharged expression joiner!
+    rejoin_split_expressions(args, &arg_count);
 
     if (!strcmp(ins, "macro")) {
         defining_macro = true; strcpy(macro_lib[macro_lib_count].name, args[0]);
@@ -692,17 +729,31 @@ void process_line(char *line, bool write_mode) {
         if (!is_call && try_parse_reg(args[0], &v1) == 0) v1 = eval_math(args[0], get_virtual_address(), false);
 
         if (write_mode) {
-            // THE FIX: Unconditionally generate relocations for all global targets in ELF mode!
-            bool needs_reloc = output_elf && strchr(target, '.') == NULL && target[0] != '@';
-            
-            if (needs_reloc) {
-                if (is_call) add_relocation(get_current_offset(), target, R_RISCV_CALL);
-                else {
-                    add_relocation(get_current_offset(),     target, R_RISCV_HI20);
-                    add_relocation(get_current_offset() + 4, target, R_RISCV_LO12_I);
-                }
+            // --- SPLIT THE SYMBOL AND THE ADDEND ---
+            char base_sym[128];
+            strcpy(base_sym, target);
+            int32_t addend = 0;
+
+            char *math_op = strpbrk(base_sym, "+-");
+            if (math_op) {
+                // Evaluate just the math portion (e.g., "+ 8" or "- 4")
+                addend = eval_math(math_op, get_virtual_address(), false);
+                *math_op = '\0'; // Cut the string to isolate the base name
+                trim_whitespace(base_sym);
             }
 
+            int addr = find_symbol(base_sym); // Look up the isolated base name
+            bool needs_reloc = output_elf && strchr(base_sym, '.') == NULL && base_sym[0] != '@';
+            
+            if (needs_reloc) {
+                if (is_call) {
+                    add_relocation(get_current_offset(), base_sym, R_RISCV_CALL, addend);
+                } else {
+                    add_relocation(get_current_offset(),     base_sym, R_RISCV_HI20, addend);
+                    add_relocation(get_current_offset() + 4, base_sym, R_RISCV_LO12_I, addend);
+                }
+            }
+            
             uint32_t val   = (uint32_t)eval_math(target, get_virtual_address(), is_call);
             uint32_t lower = val & 0xFFF;
             uint32_t upper = (lower & 0x800) ? (val >> 12) + 1 : (val >> 12);
@@ -741,11 +792,24 @@ void process_line(char *line, bool write_mode) {
         else v1 = 0;
 
         if (write_mode) {
-            // THE FIX: Unconditionally generate relocations for all global targets in ELF mode!
-            if (output_elf && target_name[0] != '@' && strchr(target_name, '.') == NULL) {
-                add_relocation(get_current_offset(), target_name, R_RISCV_JAL);
+            // --- SPLIT THE SYMBOL AND THE ADDEND ---
+            char base_sym[128];
+            strcpy(base_sym, target_name);
+            int32_t addend = 0;
+
+            char *math_op = strpbrk(base_sym, "+-");
+            if (math_op) {
+                addend = eval_math(math_op, get_virtual_address(), false);
+                *math_op = '\0'; 
+                trim_whitespace(base_sym);
+            }
+
+            // Unconditionally generate relocations for all global targets in ELF mode
+            if (output_elf && base_sym[0] != '@' && strchr(base_sym, '.') == NULL) {
+                add_relocation(get_current_offset(), base_sym, R_RISCV_JAL, addend);
             }
         }
+        
         v2 = eval_math(target_name, get_virtual_address(), true);
         uint32_t bin = encode_instruction(ins, v1, v2, v3);
         emit_bytes(&bin, 4, write_mode); return;

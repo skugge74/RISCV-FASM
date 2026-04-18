@@ -1,17 +1,17 @@
-// Import the function and the variable from the Assembler!
 extern int add_to_shared_var(int a);
-extern int shared_var;
+extern int shared_var[2];
+extern int compute_offset();
 
 int main() {
-    // 1. Try to overwrite the Assembly variable from C.
-    // If the Assembler failed to separate .data and .text, 
-    // this exact line will cause a Segmentation Fault.
-    shared_var = 20;
-    
-    // 2. Call the Assembly function to add 22 to our variable.
-    // It will load 20, add 22, store 42, and return 42.
-    int result = add_to_shared_var(22);
-    
-    // Return 42 to the OS
-    return result; 
+    shared_var[1] = 20;
+
+    // Test 1: la with addend (existing)
+    int result1 = add_to_shared_var(22);  // expects 42
+
+    // Test 2: li with compile-time math expression
+    int result2 = compute_offset();       // expects 40
+
+    if (result1 != 42) return 1;
+    if (result2 != 40) return 2;
+    return 42;
 }

@@ -100,8 +100,8 @@ uint32_t encode_instruction(char *name, int a1, int a2, int a3);
 void add_symbol(const char *name, uint32_t offset);
 int  find_symbol(const char *name);
 void add_or_update_variable(const char *name, int value);
-void add_relocation(uint32_t offset, const char *name, int type);
-
+//void add_relocation(uint32_t offset, const char *name, int type);
+void add_relocation(uint32_t offset, const char *name, int type, int32_t addend);
 char *trim_whitespace(char *str);
 void  simplify_punct(char *str);
 bool  split_line(const char *str, char *ins, char args[MAX_ARGS][128], int *arg_count);
@@ -120,5 +120,8 @@ void save_binary(const char *filename);
 void save_elf(const char *filename);
 void dump_symbol_table();
 void panic(const char *fmt, ...);
+
+void strip_spaces(char *str);
+void rejoin_split_expressions(char args[MAX_ARGS][128], int *arg_count);
 
 #endif // ASSEMBLER_H

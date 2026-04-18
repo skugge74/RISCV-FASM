@@ -232,6 +232,6 @@ For automation, CI/CD pipelines, or custom Python test suites, use **Quiet Mode*
 
 ### 🚀 Updated TODO
 * [x] **Separate Sections:** Separate sections `.text` and `.data` to ensure correct R/W/X OS permissions and avoid segfaults during C-interop.
-* [ ] **Recursive Inclusion:** Allow files to include files that include files.
+* [x] **Recursive Inclusion:** Allow files to include files that include files.
 * [ ] **Self-Hosting:** Rewrite the assembler in Kdex Assembly.
-* [ ] **Relocation Math Problem** : Currently, the ELF writer handles simple relocations (like HI20 and LO12_I). But what if an instruction is something like la t0, my_var + 8?
+* [x] **Relocation Math Problem** : Currently, the ELF writer handles simple relocations (like HI20 and LO12_I). But what if an instruction is something like la t0, my_var + 8?
