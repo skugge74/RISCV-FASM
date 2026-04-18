@@ -1,0 +1,6 @@
+Target: RV32I | Version 1.1
+[1/3] [2/3] Encoding Instructions...
+✖ BUILD FAILED
+[ERROR] error.s:XX (Pass 2): Undefined symbol: 's20'
+[ERROR] error.s:XX (Pass 2): Undefined symbol: 'nowhere'
+[ERROR] error.s:XX (Pass 2): Undefined symbol: 'x32'

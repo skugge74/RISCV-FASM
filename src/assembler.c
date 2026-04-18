@@ -52,10 +52,14 @@ uint32_t get_virtual_address() {
 }
 
 void emit_bytes(const void* src, uint32_t len, bool write_mode) {
+    if (as_state.current_section == SECTION_BSS) {
+        as_state.bss_size += len;
+        return; // We NEVER write bytes to BSS in the file
+    }
+    
     if (!write_mode) {
         if (as_state.current_section == SECTION_TEXT) as_state.text_size += len;
         else if (as_state.current_section == SECTION_DATA) as_state.data_size += len;
-        else if (as_state.current_section == SECTION_BSS)  as_state.bss_size += len;
         return;
     }
     
@@ -69,7 +73,6 @@ void emit_bytes(const void* src, uint32_t len, bool write_mode) {
         as_state.data_size += len;
     }
 }
-
 // ==========================================
 // UTILITIES
 // ==========================================
@@ -179,7 +182,8 @@ bool split_line(const char *str, char *ins, char args[MAX_ARGS][128], int *arg_c
 // ==========================================
 void init_assembler_total() {
     memset(&as_state, 0, sizeof(Assembler));
-    as_state.origin = 0x80000000;
+    if (output_elf) as_state.origin = 0;
+    else as_state.origin = 0x80000000;
     symbol_count    = 0;
     relocation_count = 0;
 }
@@ -200,8 +204,12 @@ void add_relocation(uint32_t offset, const char *name, int type, int32_t addend)
     for (int i = 0; i < symbol_count; i++) {
         if (strcmp(symbol_table[i].name, name) == 0) { sym_idx = i + 1; break; }
     }
-    if (sym_idx == -1) { add_symbol(name, 0xFFFFFFFF); sym_idx = symbol_count; }
-
+    if (sym_idx == -1) {
+        add_symbol(name, 0xFFFFFFFF);
+        // Mark as extern so it goes into the global symbol pass in save_elf
+        symbol_table[symbol_count - 1].flags |= SYM_FLAG_EXTERN;
+        sym_idx = symbol_count;
+    }
     relocation_table[relocation_count].r_offset = offset;
     relocation_table[relocation_count].r_info   = ELF32_R_INFO(sym_idx, type);
     relocation_table[relocation_count].r_addend = addend;
@@ -732,11 +740,14 @@ void process_line(char *line, bool write_mode) {
         return;
     }
     int v1 = 0, v2 = 0, v3 = 0;
+    
     if (!strcmp(ins, "la") || !strcmp(ins, "call")) {
         bool is_call = !strcmp(ins, "call");
         char *target = is_call ? args[0] : args[1];
 
-        if (!is_call && try_parse_reg(args[0], &v1) == 0) v1 = eval_math(args[0], get_virtual_address(), false);
+        // Parse destination register for 'la'
+        if (!is_call && try_parse_reg(args[0], &v1) == 0) 
+            v1 = eval_math(args[0], get_virtual_address(), false);
 
         if (write_mode) {
             char base_sym[128]; strcpy(base_sym, target);
@@ -753,32 +764,56 @@ void process_line(char *line, bool write_mode) {
                 if (strcmp(symbol_table[i].name, base_sym) == 0) { sym_idx = i; break; }
             }
 
-            bool needs_reloc = output_elf && base_sym[0] != '@' &&
-                               (sym_idx == -1 || 
-                               (symbol_table[sym_idx].flags & (SYM_FLAG_GLOBAL | SYM_FLAG_EXTERN)) || 
-                               symbol_table[sym_idx].section != SECTION_ABS);
+            // Determine if we need to let the Linker handle this
+            bool needs_reloc = output_elf && base_sym[0] != '@' && (
+    sym_idx == -1 || 
+    (symbol_table[sym_idx].flags & (SYM_FLAG_GLOBAL | SYM_FLAG_EXTERN)) || 
+    symbol_table[sym_idx].section == SECTION_DATA || 
+    symbol_table[sym_idx].section == SECTION_BSS  ||
+    symbol_table[sym_idx].section == SECTION_ABS  || 
+    symbol_table[sym_idx].address == 0xFFFFFFFF
+);
 
             if (needs_reloc) {
-                if (is_call) add_relocation(get_current_offset(), base_sym, R_RISCV_CALL, addend);
-                else {
+                if (is_call) {
+                    add_relocation(get_current_offset(), base_sym, R_RISCV_CALL, addend);
+                    // Standard RISC-V Linker Placeholders
+                    uint32_t b1 = 0x00000097; // auipc ra, 0
+                    uint32_t b2 = 0x000080e7; // jalr ra, 0(ra)
+                    emit_bytes(&b1, 4, true); 
+                    emit_bytes(&b2, 4, true);
+                } else {
                     add_relocation(get_current_offset(),     base_sym, R_RISCV_HI20, addend);
                     add_relocation(get_current_offset() + 4, base_sym, R_RISCV_LO12_I, addend);
+                    // Placeholders for LA: lui rd, 0; addi rd, rd, 0
+                    uint32_t b1 = 0x37 | (v1 << 7);
+                    uint32_t b2 = 0x13 | (v1 << 7) | (v1 << 15);
+                    emit_bytes(&b1, 4, true); 
+                    emit_bytes(&b2, 4, true);
                 }
-                
-                uint32_t b1 = is_call ? encode_U_type(0x17, 1,  0) : encode_U_type(0x37, v1, 0);
-                uint32_t b2 = is_call ? encode_I_type(0x67, 0x0, 0, 1, 1) : encode_I_type(0x13, 0x0, 0, v1, v1);
-                emit_bytes(&b1, 4, true); emit_bytes(&b2, 4, true);
+                return; // <--- EXIT NOW. Do not run local resolution.
             } else {
+                // LOCAL RESOLUTION (Used for internal labels or Flat Binaries)
                 uint32_t val   = (uint32_t)eval_math(target, get_virtual_address(), is_call);
                 uint32_t lower = val & 0xFFF;
                 uint32_t upper = (lower & 0x800) ? (val >> 12) + 1 : (val >> 12);
-                uint32_t b1 = is_call ? encode_U_type(0x17, 1,  upper << 12) : encode_U_type(0x37, v1, upper << 12);
-                uint32_t b2 = is_call ? encode_I_type(0x67, 0x0, (int)lower, 1,  1) : encode_I_type(0x13, 0x0, (int)lower, v1, v1);
-                emit_bytes(&b1, 4, true); emit_bytes(&b2, 4, true);
+                
+                uint32_t b1, b2;
+                if (is_call) {
+                    b1 = encode_U_type(0x17, 1, upper << 12);
+                    b2 = encode_I_type(0x67, 0x0, (int)lower, 1, 1);
+                } else {
+                    b1 = encode_U_type(0x37, v1, upper << 12);
+                    b2 = encode_I_type(0x13, 0x0, (int)lower, v1, v1);
+                }
+                emit_bytes(&b1, 4, true); 
+                emit_bytes(&b2, 4, true);
             }
             return;
         }
-        emit_bytes(NULL, 8, false); return;
+        // Pass 1: Just reserve 8 bytes
+        emit_bytes(NULL, 8, false); 
+        return;
     }
 
     if (!strcmp(ins, "li")) {
@@ -880,7 +915,8 @@ void save_elf(const char *filename) {
     FILE *f = fopen(filename, "wb");
     if (!f) return;
 
-    char shstrtab[] = "\0.text\0.data\0.shstrtab\0.symtab\0.strtab\0.rela.text\0";
+    // 1. Setup String Tables
+    char shstrtab[] = "\0.text\0.data\0.shstrtab\0.symtab\0.strtab\0.rela.text\0.bss\0";
     int  shstrtab_size = sizeof(shstrtab);
     char *strtab = calloc(1, 65536);
     int strtab_size = 1; 
@@ -890,8 +926,9 @@ void save_elf(const char *filename) {
     int elf_sym_map[MAX_SYMBOLS]; 
     int sym_idx = 1; 
 
-    // PASS A: Local Symbols (Non-globals)
+    // PASS A: Local Symbols
     for (int i = 0; i < symbol_count; i++) {
+    if (symbol_table[i].address == 0xFFFFFFFF) continue;  // ← add this
         if (!(symbol_table[i].flags & (SYM_FLAG_GLOBAL | SYM_FLAG_EXTERN))) {
             symtab[sym_idx].st_name = strtab_size;
             strcpy(&strtab[strtab_size], symbol_table[i].name);
@@ -937,15 +974,13 @@ void save_elf(const char *filename) {
                 symtab[sym_idx].st_shndx = SHN_UNDEF;
             }
             
-            int st_type = STT_NOTYPE;
-            if (symbol_table[i].section == SECTION_DATA) st_type = STT_OBJECT;
-            else if (symbol_table[i].section == SECTION_TEXT) st_type = STT_FUNC;
-            
+            int st_type = (symbol_table[i].section == SECTION_DATA) ? STT_OBJECT : (symbol_table[i].section == SECTION_TEXT ? STT_FUNC : STT_NOTYPE);
             symtab[sym_idx].st_info = ELF32_ST_INFO(STB_GLOBAL, st_type);
             elf_sym_map[i] = sym_idx++;
         }
     }
 
+    // 2. Patch Relocation Symbol Indices
     Elf32_Rela patched[MAX_RELOCS];
     for (int i = 0; i < relocation_count; i++) {
         patched[i] = relocation_table[i];
@@ -954,47 +989,73 @@ void save_elf(const char *filename) {
         patched[i].r_info = ELF32_R_INFO(new_sym_idx, ELF32_R_TYPE(relocation_table[i].r_info));
     }
 
-    int num_sections = 7;
-    uint32_t off_shdr     = sizeof(Elf32_Ehdr);
-    uint32_t off_text     = off_shdr     + (num_sections * sizeof(Elf32_Shdr));
-    uint32_t off_data     = off_text     + as_state.text_size;
-    uint32_t off_shstrtab = off_data     + as_state.data_size;
-    uint32_t off_strtab   = off_shstrtab + shstrtab_size;
-    uint32_t off_symtab   = off_strtab   + strtab_size;
-    uint32_t off_rela     = off_symtab   + (sym_idx * sizeof(Elf32_Sym));
+    // 3. Calculate Section Offsets with 4-byte Alignment
+    int num_sections = 8;
+    #define ALIGN4(x) (((x) + 3) & ~3)
 
+    uint32_t current_off = sizeof(Elf32_Ehdr);
+    uint32_t off_shdr    = current_off; 
+    current_off += (num_sections * sizeof(Elf32_Shdr));
+
+    uint32_t off_text     = ALIGN4(current_off); current_off = off_text + as_state.text_size;
+    uint32_t off_data     = ALIGN4(current_off); current_off = off_data + as_state.data_size;
+    uint32_t off_shstrtab = ALIGN4(current_off); current_off = off_shstrtab + shstrtab_size;
+    uint32_t off_strtab   = ALIGN4(current_off); current_off = off_strtab + strtab_size;
+    uint32_t off_symtab   = ALIGN4(current_off); current_off = off_symtab + (sym_idx * sizeof(Elf32_Sym));
+    uint32_t off_rela     = ALIGN4(current_off); current_off = off_rela + (relocation_count * sizeof(Elf32_Rela));
+
+    // 4. Setup Headers
     Elf32_Ehdr ehdr; 
     memset(&ehdr, 0, sizeof(ehdr));
     memcpy(ehdr.e_ident, ELFMAG, 4);
-    ehdr.e_ident[4] = 1; ehdr.e_ident[5] = 1; ehdr.e_ident[6] = 1;
-    ehdr.e_type = 1; ehdr.e_machine = 0xF3; ehdr.e_version = 1;
+    ehdr.e_ident[4] = 1; ehdr.e_ident[5] = 1; ehdr.e_ident[6] = 1; // 32-bit, Little Endian, Version 1
+    ehdr.e_type = 1; ehdr.e_machine = 0xF3; ehdr.e_version = 1;    // ET_REL, RISC-V
     ehdr.e_shoff = off_shdr; ehdr.e_ehsize = sizeof(Elf32_Ehdr);
     ehdr.e_shentsize = sizeof(Elf32_Shdr); ehdr.e_shnum = num_sections; ehdr.e_shstrndx = 3;
 
-    Elf32_Shdr shdr[7];
+    Elf32_Shdr shdr[8];
     memset(shdr, 0, sizeof(shdr));
-    shdr[1].sh_name = 1; shdr[1].sh_type = 1; shdr[1].sh_flags = 6;
+    // [1] .text
+    shdr[1].sh_name = 1; shdr[1].sh_type = 1; shdr[1].sh_flags = 6; // ALLOC | EXEC
     shdr[1].sh_offset = off_text; shdr[1].sh_size = as_state.text_size; shdr[1].sh_addralign = 4;
-    shdr[2].sh_name = 7; shdr[2].sh_type = 1; shdr[2].sh_flags = 3;
+    // [2] .data
+    shdr[2].sh_name = 7; shdr[2].sh_type = 1; shdr[2].sh_flags = 3; // ALLOC | WRITE
     shdr[2].sh_offset = off_data; shdr[2].sh_size = as_state.data_size; shdr[2].sh_addralign = 4;
+    // [3] .shstrtab
     shdr[3].sh_name = 13; shdr[3].sh_type = 3; 
     shdr[3].sh_offset = off_shstrtab; shdr[3].sh_size = shstrtab_size;
-    shdr[4].sh_name = 23; shdr[4].sh_type = 2; shdr[4].sh_link = 5;
+    // [4] .symtab
+    shdr[4].sh_name = 23; shdr[4].sh_type = 2; shdr[4].sh_link = 5; // Link to .strtab
     shdr[4].sh_info = local_sym_count; shdr[4].sh_entsize = sizeof(Elf32_Sym);
-    shdr[4].sh_offset = off_symtab; shdr[4].sh_size = sym_idx * sizeof(Elf32_Sym);
+    shdr[4].sh_offset = off_symtab; shdr[4].sh_size = sym_idx * sizeof(Elf32_Sym); shdr[4].sh_addralign = 4;
+    // [5] .strtab
     shdr[5].sh_name = 31; shdr[5].sh_type = 3;
     shdr[5].sh_offset = off_strtab; shdr[5].sh_size = strtab_size;
-    shdr[6].sh_name = 39; shdr[6].sh_type = 4; shdr[6].sh_link = 4; shdr[6].sh_info = 1;
+    // [6] .rela.text
+    shdr[6].sh_name = 39; shdr[6].sh_type = 4; shdr[6].sh_link = 4; // Link to .symtab
+    shdr[6].sh_info = 1; // CRITICAL: This points to index [1] (.text)
     shdr[6].sh_entsize = sizeof(Elf32_Rela);
-    shdr[6].sh_offset = off_rela; shdr[6].sh_size = relocation_count * sizeof(Elf32_Rela);
+    shdr[6].sh_offset = off_rela; shdr[6].sh_size = relocation_count * sizeof(Elf32_Rela); shdr[6].sh_addralign = 4;
+    // [7] .bss
+    shdr[7].sh_name = 50; shdr[7].sh_type = 8; shdr[7].sh_flags = 3; // SHT_NOBITS
+    shdr[7].sh_offset = off_rela; shdr[7].sh_size = as_state.bss_size; shdr[7].sh_addralign = 4;
 
+    // 5. Sequential Write
+    fseek(f, 0, SEEK_SET);
     fwrite(&ehdr, 1, sizeof(ehdr), f);
-    fwrite(shdr, 1, sizeof(shdr), f);
+    fseek(f, off_shdr, SEEK_SET);
+    fwrite(shdr, 1, num_sections * sizeof(Elf32_Shdr), f);
+    fseek(f, off_text, SEEK_SET);
     fwrite(as_state.text, 1, as_state.text_size, f);
+    fseek(f, off_data, SEEK_SET);
     fwrite(as_state.data, 1, as_state.data_size, f);
+    fseek(f, off_shstrtab, SEEK_SET);
     fwrite(shstrtab, 1, shstrtab_size, f);
+    fseek(f, off_strtab, SEEK_SET);
     fwrite(strtab, 1, strtab_size, f);
+    fseek(f, off_symtab, SEEK_SET);
     fwrite(symtab, 1, sym_idx * sizeof(Elf32_Sym), f);
+    fseek(f, off_rela, SEEK_SET);
     fwrite(patched, 1, relocation_count * sizeof(Elf32_Rela), f);
 
     free(strtab);
