@@ -7,15 +7,6 @@ msg_argc: .asciz "Arguments found: "
 msg_argv: .asciz "First argument: "
 newline:  .asciz "\n"
 
-.include "../macros/stdlib/kstdio.s"
-.include "../macros/stdlib/kstring.s"
-.include "../macros/stdlib/kargs.s"
-
-.data
-msg_argc: .asciz "Arguments found: "
-msg_argv: .asciz "First argument: "
-newline:  .asciz "\n"
-
 .text
 .global _start
 _start:

@@ -1,8 +1,10 @@
-# Kdex RISC-V High-Level Assembler
+# A RISC-V macro-assembly language with compiler-like capabilities and ELF toolchain integration.
 
-**Kdex** is a robust, from-scratch RISC-V assembler and toolchain written entirely in C. It was built to bridge the gap between raw hardware control and high-level programming logic. 
+*RISC-V assembler and toolchain written entirely in C. It was built to bridge the gap between raw hardware control and high-level programming logic.*
 
-Unlike traditional bare-bones assemblers, Kdex features a **Stack-Based Macro Engine**, a fully compliant **ELF Relocation Engine**, and its own **Standard Library** (kinda). It allows you to write complex loops, nested conditionals, and dynamic data structures while retaining bit-perfect control over the CPU.
+__If you dont wanna read everything:__ custom RISC-V toolchain + runtime + mini standard library + linker + allocator + ABI + macro DSL
+
+Unlike traditional bare-bones assemblers, it features a **Stack-Based Macro Engine**, a fully compliant **ELF Relocation Engine**, and its own **Standard Library** (kinda). It allows you to write complex loops, nested conditionals, and dynamic data structures while retaining bit-perfect control over the CPU.
 
 Whether you are writing a bare-metal bootloader (`.bin`) or compiling an object file (`.o`) to link with a modern C/C++ codebase via the GNU Linker, Kdex handles the math, the memory, and the machine code.
 
@@ -11,8 +13,8 @@ Whether you are writing a bare-metal bootloader (`.bin`) or compiling an object 
 ## ✨ The Kdex Philosophy & Architecture
 
 * **Dual-Mode Output:**
-  * **Relocatable ELF (`-f elf`):** Generates strict, industry-standard object files. Features a smart relocation engine (`R_RISCV_HI20`, `LO12_I`, `CALL`, `JAL`) that perfectly connects your assembly to `gcc` and `ld` without OS segmentation faults. It natively handles complex relocation math (e.g., `la t0, my_buffer + 2048`).
-  * **Flat Binary (`-f flat`):** Generates pure, headerless machine code blobs for embedded microcontrollers, bootloaders, or raw QEMU execution based on a strict `.org` origin.
+* **Relocatable ELF (`-f elf`):** Generates strict, industry-standard object files. Features a smart relocation engine (`R_RISCV_HI20`, `LO12_I`, `CALL`, `JAL`) that perfectly connects your assembly to `gcc` and `ld` without OS segmentation faults. It natively handles complex relocation math (e.g., `la t0, my_buffer + 2048`).
+* **Flat Binary (`-f flat`):** Generates pure, headerless machine code blobs for embedded microcontrollers, bootloaders, or raw QEMU execution based on a strict `.org` origin.
 * **High-Level Macro System:** Infinite logic nesting (loops within loops), variadic arguments (`%n`, `%#`), and automatic scoped labels (`.loop_%u`) to prevent naming collisions.
 * **The Kdex Standard Library (`kstdlib`):** Ships with safe, register-preserving wrappers for Linux syscalls, including `kstdio` (printing), `kfile` (file I/O), and `kstring` (memory operations).
 * **Quality of Life Preprocessor:** Compile-time mutable variables (`=`), recursive file inclusion (`.include`), and a smart lexer that natively understands character literals (`'a'`, `'\n'`).
@@ -118,6 +120,5 @@ print_char '\n'              # Lexer safely handles escapes and chars
 * [x] **Pseudo-Instruction Expansion:** Added `bltz`, `bgez`, and `neg` to round out the base integer instruction set.
 
 ### Next Steps
-* [ ] **Dynamic Memory (The Heap):** Implement `kmalloc` and `kfree` in the standard library using the `brk` or `mmap` syscalls.
-* [ ] **CLI Argument Parsing:** Add standard library macros to automatically parse `argc` and `argv` pushed to the stack by the Linux kernel.
-* [ ] **Self-Hosting:** The ultimate test. Rewrite the Kdex C source code entirely in Kdex Assembly.
+* [ ] **Documentation**: compile-time vs runtime rules, macro expansion order, relocation model, struct memory layout rules
+* [ ] **Debug mode**: --dump-macros, --dump-relocations, --trace-expansion
